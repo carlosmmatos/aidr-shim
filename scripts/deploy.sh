@@ -268,7 +268,7 @@ main() {
     echo "    gcloud run services logs tail $SERVICE_NAME --region=$REGION --project=$PROJECT_ID"
     echo ""
     echo "  Test the deployment:"
-    echo "    go run ./cmd/testclient --address=${SERVICE_URL#https://}:443 --tls --payload=test/testdata/clean_request.json"
+    echo "    go run ./test/client --address=${SERVICE_URL#https://}:443 --tls --payload=test/testdata/clean_request.json"
     echo ""
 }
 

@@ -69,7 +69,7 @@ if [[ -n "$SINGLE_FILE" ]]; then
     # Test single file
     echo "Testing single payload: $SINGLE_FILE"
     echo ""
-    go run ./cmd/testclient \
+    go run ./test/client \
         --address="$SERVICE_HOST:443" \
         --tls \
         --payload="$SINGLE_FILE"
@@ -77,7 +77,7 @@ else
     # Batch test all payloads
     echo "Running batch tests from test/testdata/"
     echo ""
-    go run ./cmd/testclient \
+    go run ./test/client \
         --address="$SERVICE_HOST:443" \
         --tls \
         --batch \

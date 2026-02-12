@@ -53,10 +53,12 @@ func (m *mockExternalProcessorStream) Recv() (*extprocv3.ProcessingRequest, erro
 }
 
 func newTestLogger() *slog.Logger {
+	//nolint:sloglint // NewDiscardHandler not available in this Go version
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 func TestCalloutService_AllowedRequest(t *testing.T) {
+	t.Parallel()
 	// Create mock client that allows the request
 	mockClient := &mockAIRDClient{
 		response: &aidr.AIGuardGuardChatCompletionsResponse{
@@ -71,7 +73,13 @@ func TestCalloutService_AllowedRequest(t *testing.T) {
 		},
 	}
 
-	service := NewCalloutService(mockClient, "test-instance", newTestLogger(), false, false)
+	service := NewCalloutService(CalloutServiceParams{
+		AIRDClient:          mockClient,
+		CollectorInstanceID: "test-instance",
+		Logger:              newTestLogger(),
+		DebugMode:           false,
+		EchoMode:            false,
+	})
 
 	// Create test request with messages
 	requestBody := map[string]any{
@@ -116,6 +124,7 @@ func TestCalloutService_AllowedRequest(t *testing.T) {
 }
 
 func TestCalloutService_BlockedRequest(t *testing.T) {
+	t.Parallel()
 	// Create mock client that blocks the request
 	mockClient := &mockAIRDClient{
 		response: &aidr.AIGuardGuardChatCompletionsResponse{
@@ -130,7 +139,13 @@ func TestCalloutService_BlockedRequest(t *testing.T) {
 		},
 	}
 
-	service := NewCalloutService(mockClient, "test-instance", newTestLogger(), false, false)
+	service := NewCalloutService(CalloutServiceParams{
+		AIRDClient:          mockClient,
+		CollectorInstanceID: "test-instance",
+		Logger:              newTestLogger(),
+		DebugMode:           false,
+		EchoMode:            false,
+	})
 
 	// Create test request with malicious content
 	requestBody := map[string]any{
@@ -184,6 +199,7 @@ func TestCalloutService_BlockedRequest(t *testing.T) {
 }
 
 func TestCalloutService_TransformedRequest(t *testing.T) {
+	t.Parallel()
 	// Create mock client that transforms the request (redacts PII)
 	guardOutput := map[string]any{
 		"messages": []map[string]any{
@@ -205,7 +221,13 @@ func TestCalloutService_TransformedRequest(t *testing.T) {
 		},
 	}
 
-	service := NewCalloutService(mockClient, "test-instance", newTestLogger(), false, false)
+	service := NewCalloutService(CalloutServiceParams{
+		AIRDClient:          mockClient,
+		CollectorInstanceID: "test-instance",
+		Logger:              newTestLogger(),
+		DebugMode:           false,
+		EchoMode:            false,
+	})
 
 	// Create test request with PII
 	requestBody := map[string]any{
@@ -279,6 +301,7 @@ func TestCalloutService_TransformedRequest(t *testing.T) {
 }
 
 func TestCalloutService_ResponseBlocked(t *testing.T) {
+	t.Parallel()
 	// Create mock client that blocks the response
 	mockClient := &mockAIRDClient{
 		response: &aidr.AIGuardGuardChatCompletionsResponse{
@@ -293,7 +316,13 @@ func TestCalloutService_ResponseBlocked(t *testing.T) {
 		},
 	}
 
-	service := NewCalloutService(mockClient, "test-instance", newTestLogger(), false, false)
+	service := NewCalloutService(CalloutServiceParams{
+		AIRDClient:          mockClient,
+		CollectorInstanceID: "test-instance",
+		Logger:              newTestLogger(),
+		DebugMode:           false,
+		EchoMode:            false,
+	})
 
 	// Create test response body
 	responseBody := map[string]any{
@@ -352,12 +381,19 @@ func TestCalloutService_ResponseBlocked(t *testing.T) {
 }
 
 func TestCalloutService_AIRDError(t *testing.T) {
+	t.Parallel()
 	// Create mock client that returns an error
 	mockClient := &mockAIRDClient{
 		err: context.DeadlineExceeded,
 	}
 
-	service := NewCalloutService(mockClient, "test-instance", newTestLogger(), false, false)
+	service := NewCalloutService(CalloutServiceParams{
+		AIRDClient:          mockClient,
+		CollectorInstanceID: "test-instance",
+		Logger:              newTestLogger(),
+		DebugMode:           false,
+		EchoMode:            false,
+	})
 
 	requestBody := map[string]any{
 		"messages": []map[string]any{
@@ -402,9 +438,16 @@ func TestCalloutService_AIRDError(t *testing.T) {
 }
 
 func TestCalloutService_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	mockClient := &mockAIRDClient{}
 
-	service := NewCalloutService(mockClient, "test-instance", newTestLogger(), false, false)
+	service := NewCalloutService(CalloutServiceParams{
+		AIRDClient:          mockClient,
+		CollectorInstanceID: "test-instance",
+		Logger:              newTestLogger(),
+		DebugMode:           false,
+		EchoMode:            false,
+	})
 
 	// Send invalid JSON
 	stream := &mockExternalProcessorStream{
@@ -443,9 +486,16 @@ func TestCalloutService_InvalidJSON(t *testing.T) {
 }
 
 func TestCalloutService_Headers(t *testing.T) {
+	t.Parallel()
 	mockClient := &mockAIRDClient{}
 
-	service := NewCalloutService(mockClient, "test-instance", newTestLogger(), false, false)
+	service := NewCalloutService(CalloutServiceParams{
+		AIRDClient:          mockClient,
+		CollectorInstanceID: "test-instance",
+		Logger:              newTestLogger(),
+		DebugMode:           false,
+		EchoMode:            false,
+	})
 
 	stream := &mockExternalProcessorStream{
 		ctx: context.Background(),
@@ -486,7 +536,14 @@ func TestCalloutService_Headers(t *testing.T) {
 }
 
 func TestBuildGuardInput(t *testing.T) {
-	service := NewCalloutService(nil, "", newTestLogger(), false, false)
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{
+		AIRDClient:          nil,
+		CollectorInstanceID: "",
+		Logger:              newTestLogger(),
+		DebugMode:           false,
+		EchoMode:            false,
+	})
 
 	tests := []struct {
 		name     string
@@ -565,6 +622,7 @@ func TestBuildGuardInput(t *testing.T) {
 }
 
 func TestCalloutService_EchoMode(t *testing.T) {
+	t.Parallel()
 	// Create a mock client that would block - but echo mode should bypass it
 	mockClient := &mockAIRDClient{
 		response: &aidr.AIGuardGuardChatCompletionsResponse{
@@ -575,7 +633,13 @@ func TestCalloutService_EchoMode(t *testing.T) {
 	}
 
 	// Enable echo mode
-	service := NewCalloutService(mockClient, "test-instance", newTestLogger(), false, true)
+	service := NewCalloutService(CalloutServiceParams{
+		AIRDClient:          mockClient,
+		CollectorInstanceID: "test-instance",
+		Logger:              newTestLogger(),
+		DebugMode:           false,
+		EchoMode:            true,
+	})
 
 	requestBody := map[string]any{
 		"messages": []map[string]any{

@@ -90,7 +90,7 @@ Test your deployment with the included test client:
 
 ```bash
 # Build test client
-go build -o testclient ./cmd/testclient
+go build -o testclient ./test/client
 
 # Test a payload
 ./testclient \

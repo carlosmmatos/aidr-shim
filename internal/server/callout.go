@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 
@@ -48,20 +49,30 @@ type CalloutService struct {
 	echoMode            bool
 }
 
+// NewCalloutServiceParams contains parameters for creating a CalloutService.
+type CalloutServiceParams struct {
+	AIRDClient          AIRDClient
+	CollectorInstanceID string
+	Logger              *slog.Logger
+	DebugMode           bool
+	EchoMode            bool
+}
+
 // NewCalloutService creates a new CalloutService.
-func NewCalloutService(aidrClient AIRDClient, collectorInstanceID string, logger *slog.Logger, debugMode, echoMode bool) *CalloutService {
+func NewCalloutService(cs CalloutServiceParams) *CalloutService {
 	return &CalloutService{
-		aidrClient:          aidrClient,
-		collectorInstanceID: collectorInstanceID,
-		logger:              logger,
-		debugMode:           debugMode,
-		echoMode:            echoMode,
+		aidrClient:          cs.AIRDClient,
+		collectorInstanceID: cs.CollectorInstanceID,
+		logger:              cs.Logger,
+		debugMode:           cs.DebugMode,
+		echoMode:            cs.EchoMode,
 	}
 }
 
 // Process implements the bidirectional streaming RPC for ext_proc.
 func (s *CalloutService) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
-	ctx := stream.Context()
+	ctx := WithRequestID(stream.Context())
+	requestID := GetRequestID(ctx)
 
 	for {
 		req, err := stream.Recv()
@@ -71,10 +82,10 @@ func (s *CalloutService) Process(stream extprocv3.ExternalProcessor_ProcessServe
 		if err != nil {
 			// Context cancellation is normal when client disconnects
 			if errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
-				s.logger.Debug("stream closed by client")
+				s.logger.Debug("stream closed by client", "request_id", requestID)
 				return nil
 			}
-			s.logger.Error("error receiving request", "error", err)
+			s.logger.Error("error receiving request", "error", err, "request_id", requestID)
 			return status.Errorf(codes.Internal, "error receiving request: %v", err)
 		}
 
@@ -84,17 +95,31 @@ func (s *CalloutService) Process(stream extprocv3.ExternalProcessor_ProcessServe
 		case *extprocv3.ProcessingRequest_RequestHeaders:
 			resp = s.handleRequestHeaders(ctx, v.RequestHeaders)
 		case *extprocv3.ProcessingRequest_RequestBody:
-			resp = s.handleRequestBody(ctx, v.RequestBody)
+			resp, err = s.handleRequestBody(ctx, v.RequestBody)
+			if err != nil {
+				s.logger.Error("processing request body failed",
+					"error", err,
+					"request_id", requestID,
+				)
+				resp = s.allowResponse(true)
+			}
 		case *extprocv3.ProcessingRequest_ResponseHeaders:
 			resp = s.handleResponseHeaders(ctx, v.ResponseHeaders)
 		case *extprocv3.ProcessingRequest_ResponseBody:
-			resp = s.handleResponseBody(ctx, v.ResponseBody)
+			resp, err = s.handleResponseBody(ctx, v.ResponseBody)
+			if err != nil {
+				s.logger.Error("processing response body failed",
+					"error", err,
+					"request_id", requestID,
+				)
+				resp = s.allowResponse(false)
+			}
 		default:
 			resp = &extprocv3.ProcessingResponse{}
 		}
 
 		if err := stream.Send(resp); err != nil {
-			s.logger.Error("error sending response", "error", err)
+			s.logger.Error("error sending response", "error", err, "request_id", requestID)
 			return status.Errorf(codes.Internal, "error sending response: %v", err)
 		}
 	}
@@ -118,15 +143,15 @@ func (s *CalloutService) handleResponseHeaders(_ context.Context, _ *extprocv3.H
 	}
 }
 
-func (s *CalloutService) handleRequestBody(ctx context.Context, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
+func (s *CalloutService) handleRequestBody(ctx context.Context, body *extprocv3.HttpBody) (*extprocv3.ProcessingResponse, error) {
 	return s.processBody(ctx, body.Body, aidr.AIGuardGuardChatCompletionsParamsEventTypeInput, true)
 }
 
-func (s *CalloutService) handleResponseBody(ctx context.Context, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
+func (s *CalloutService) handleResponseBody(ctx context.Context, body *extprocv3.HttpBody) (*extprocv3.ProcessingResponse, error) {
 	return s.processBody(ctx, body.Body, aidr.AIGuardGuardChatCompletionsParamsEventTypeOutput, false)
 }
 
-func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType aidr.AIGuardGuardChatCompletionsParamsEventType, isRequest bool) *extprocv3.ProcessingResponse {
+func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType aidr.AIGuardGuardChatCompletionsParamsEventType, isRequest bool) (*extprocv3.ProcessingResponse, error) {
 	eventTypeStr := "request"
 	if !isRequest {
 		eventTypeStr = "response"
@@ -137,15 +162,13 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 		s.logger.Debug("processing body",
 			"type", eventTypeStr,
 			"body_size", len(body),
-			"body", string(body),
 		)
 	}
 
 	// Parse the body as JSON to extract guard_input structure
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
-		s.logger.Warn("failed to parse body as JSON, allowing through", "error", err)
-		return s.allowResponse(isRequest)
+		return nil, fmt.Errorf("parse JSON body: %w", err)
 	}
 
 	// Echo mode: log and allow without calling AIDR
@@ -154,7 +177,7 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 			"type", eventTypeStr,
 			"body_size", len(body),
 		)
-		return s.allowResponse(isRequest)
+		return s.allowResponse(isRequest), nil
 	}
 
 	// Build guard_input - the SDK accepts any as guard_input so we pass the parsed payload
@@ -172,17 +195,14 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 	}
 
 	if s.debugMode {
-		guardInputJSON, _ := json.Marshal(guardInput)
 		s.logger.Debug("calling AIDR API",
 			"event_type", string(eventType),
-			"guard_input", string(guardInputJSON),
 		)
 	}
 
 	aidrResp, err := s.aidrClient.GuardChatCompletions(ctx, params)
 	if err != nil {
-		s.logger.Error("AIDR API call failed, allowing through", "error", err)
-		return s.allowResponse(isRequest)
+		return nil, fmt.Errorf("call AIDR API: %w", err)
 	}
 
 	if s.debugMode {
@@ -195,63 +215,78 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 	// Check for blocked content
 	if aidrResp.Result.Blocked {
 		s.logger.Info("request blocked by AIDR policy")
-		return s.blockedResponse(isRequest)
+		resp, err := s.blockedResponse(isRequest)
+		if err != nil {
+			return nil, fmt.Errorf("create blocked response: %w", err)
+		}
+		return resp, nil
 	}
 
 	// Check for transformed content
 	if aidrResp.Result.Transformed && aidrResp.Result.GuardOutput != nil {
 		s.logger.Info("request transformed by AIDR policy")
 		if s.debugMode {
-			guardOutputJSON, _ := json.Marshal(aidrResp.Result.GuardOutput)
-			s.logger.Debug("transformed output", "guard_output", string(guardOutputJSON))
+			s.logger.Debug("transformed output", "has_guard_output", true)
 		}
-		return s.transformedResponse(aidrResp.Result.GuardOutput, isRequest)
+		resp, err := s.transformedResponse(aidrResp.Result.GuardOutput, isRequest)
+		if err != nil {
+			return nil, fmt.Errorf("create transformed response: %w", err)
+		}
+		return resp, nil
 	}
 
 	// Allow unchanged
-	return s.allowResponse(isRequest)
+	return s.allowResponse(isRequest), nil
 }
 
 // buildGuardInput constructs the guard_input structure from the incoming payload.
 // The AIDR API expects guard_input to contain fields like "messages" and "tools"
 // following the OpenAI Chat Completions format.
 func (s *CalloutService) buildGuardInput(payload map[string]any) map[string]any {
-	// The guard_input is the full payload for AI requests
-	// which should contain messages array and optionally tools
 	guardInput := make(map[string]any)
 
-	// Copy messages if present
+	// Strategy 1: Extract messages and tools directly
+	if s.extractMessagesAndTools(payload, guardInput) {
+		return guardInput
+	}
+
+	// Strategy 2: Convert simple prompt to messages format
+	if s.convertPromptToMessages(payload, guardInput) {
+		return guardInput
+	}
+
+	// Strategy 3: Pass entire payload as-is
+	return payload
+}
+
+// extractMessagesAndTools extracts messages and tools fields from the payload.
+func (s *CalloutService) extractMessagesAndTools(payload, guardInput map[string]any) bool {
+	hasContent := false
 	if messages, ok := payload["messages"]; ok {
 		guardInput["messages"] = messages
+		hasContent = true
 	}
-
-	// Copy tools if present
 	if tools, ok := payload["tools"]; ok {
 		guardInput["tools"] = tools
+		hasContent = true
+	}
+	return hasContent
+}
+
+// convertPromptToMessages converts a simple prompt field to messages format.
+func (s *CalloutService) convertPromptToMessages(payload, guardInput map[string]any) bool {
+	prompt, hasPrompt := payload["prompt"]
+	if !hasPrompt {
+		return false
 	}
 
-	// If the payload doesn't have messages but has content directly,
-	// wrap it in a messages array (for simple prompt requests)
-	if _, hasMessages := guardInput["messages"]; !hasMessages {
-		// Check for other common fields and include them
-		if model, ok := payload["model"]; ok {
-			guardInput["model"] = model
-		}
-		if prompt, ok := payload["prompt"]; ok {
-			// Convert simple prompt to messages format
-			guardInput["messages"] = []map[string]any{
-				{"role": "user", "content": prompt},
-			}
-		}
+	if model, ok := payload["model"]; ok {
+		guardInput["model"] = model
 	}
-
-	// If still no messages, pass the entire payload as-is
-	// AIDR can analyze any valid JSON
-	if len(guardInput) == 0 {
-		return payload
+	guardInput["messages"] = []map[string]any{
+		{"role": "user", "content": prompt},
 	}
-
-	return guardInput
+	return true
 }
 
 func (s *CalloutService) allowResponse(isRequest bool) *extprocv3.ProcessingResponse {
@@ -273,7 +308,7 @@ func (s *CalloutService) allowResponse(isRequest bool) *extprocv3.ProcessingResp
 	}
 }
 
-func (s *CalloutService) blockedResponse(isRequest bool) *extprocv3.ProcessingResponse {
+func (s *CalloutService) blockedResponse(isRequest bool) (*extprocv3.ProcessingResponse, error) {
 	var blockMessage string
 	if isRequest {
 		blockMessage = "Request blocked by security policy"
@@ -281,9 +316,12 @@ func (s *CalloutService) blockedResponse(isRequest bool) *extprocv3.ProcessingRe
 		blockMessage = "Response blocked by security policy"
 	}
 
-	bodyBytes, _ := json.Marshal(map[string]string{
+	bodyBytes, err := json.Marshal(map[string]string{
 		"error": blockMessage,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal blocked response: %w", err)
+	}
 
 	return &extprocv3.ProcessingResponse{
 		Response: &extprocv3.ProcessingResponse_ImmediateResponse{
@@ -304,15 +342,14 @@ func (s *CalloutService) blockedResponse(isRequest bool) *extprocv3.ProcessingRe
 				Body: bodyBytes,
 			},
 		},
-	}
+	}, nil
 }
 
-func (s *CalloutService) transformedResponse(guardOutput interface{}, isRequest bool) *extprocv3.ProcessingResponse {
+func (s *CalloutService) transformedResponse(guardOutput any, isRequest bool) (*extprocv3.ProcessingResponse, error) {
 	// Marshal the guard output back to JSON
 	bodyBytes, err := json.Marshal(guardOutput)
 	if err != nil {
-		s.logger.Error("failed to marshal guard output", "error", err)
-		return s.allowResponse(isRequest)
+		return nil, fmt.Errorf("marshal guard output: %w", err)
 	}
 
 	bodyMutation := &extprocv3.BodyMutation{
@@ -330,7 +367,7 @@ func (s *CalloutService) transformedResponse(guardOutput interface{}, isRequest 
 					},
 				},
 			},
-		}
+		}, nil
 	}
 	return &extprocv3.ProcessingResponse{
 		Response: &extprocv3.ProcessingResponse_ResponseBody{
@@ -340,5 +377,5 @@ func (s *CalloutService) transformedResponse(guardOutput interface{}, isRequest 
 				},
 			},
 		},
-	}
+	}, nil
 }

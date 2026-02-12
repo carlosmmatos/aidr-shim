@@ -266,7 +266,7 @@ The repository includes a test client for verifying your deployment:
 
 ```bash
 # Build the test client
-go build -o testclient ./cmd/testclient
+go build -o testclient ./test/client
 
 # Test with a clean payload (should be ALLOWED)
 ./testclient \

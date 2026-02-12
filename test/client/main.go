@@ -30,7 +30,7 @@ var (
 	timeout  = flag.Duration("timeout", 30*time.Second, "Request timeout")
 )
 
-// Verdict represents the result of processing a payload
+// Verdict represents the result of processing a payload.
 type Verdict string
 
 const (
@@ -40,14 +40,14 @@ const (
 	VerdictError       Verdict = "ERROR"
 )
 
-// TestResult contains the result of testing a single payload
+// TestResult contains the result of testing a single payload.
 type TestResult struct {
-	PayloadFile      string
-	Verdict          Verdict
-	ResponseBody     string
-	HTTPStatus       int
-	TransformedBody  json.RawMessage
-	Error            error
+	PayloadFile     string
+	Verdict         Verdict
+	ResponseBody    string
+	HTTPStatus      int
+	TransformedBody json.RawMessage
+	Error           error
 }
 
 func main() {
@@ -185,7 +185,7 @@ func testRequestBody(stream extprocv3.ExternalProcessor_ProcessClient, payloadBy
 	if err := stream.Send(&extprocv3.ProcessingRequest{
 		Request: &extprocv3.ProcessingRequest_RequestBody{
 			RequestBody: &extprocv3.HttpBody{
-				Body:       payloadBytes,
+				Body:        payloadBytes,
 				EndOfStream: true,
 			},
 		},
@@ -235,7 +235,7 @@ func testResponseBody(stream extprocv3.ExternalProcessor_ProcessClient, payloadB
 	if err := stream.Send(&extprocv3.ProcessingRequest{
 		Request: &extprocv3.ProcessingRequest_ResponseBody{
 			ResponseBody: &extprocv3.HttpBody{
-				Body:       payloadBytes,
+				Body:        payloadBytes,
 				EndOfStream: true,
 			},
 		},
@@ -336,7 +336,7 @@ func printResult(result TestResult) {
 		if result.TransformedBody != nil {
 			// Pretty print transformed body
 			var pretty strings.Builder
-			prettyBytes, err := json.MarshalIndent(json.RawMessage(result.TransformedBody), "  ", "  ")
+			prettyBytes, err := json.MarshalIndent(result.TransformedBody, "  ", "  ")
 			if err == nil {
 				pretty.Write(prettyBytes)
 			}
