@@ -65,10 +65,10 @@ resource "google_cloud_run_v2_service" "aidr_shim" {
 
       # Secret references
       env {
-        name = "AIDR_BASE_URL"
+        name = "AIDR_CLOUD"
         value_source {
           secret_key_ref {
-            secret  = google_secret_manager_secret.aidr_base_url.secret_id
+            secret  = google_secret_manager_secret.aidr_cloud.secret_id
             version = "latest"
           }
         }

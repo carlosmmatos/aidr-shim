@@ -74,13 +74,13 @@ func main() {
 	// Initialize AIDR client
 	// The base URL template supports {SERVICE_NAME} placeholder
 	aidrClient := aidr.NewClient(
-		option.WithBaseURLTemplate(cfg.AIRDBaseURL),
-		option.WithToken(cfg.AIRDToken),
+		option.WithBaseURLTemplate(cfg.AIDRCloud),
+		option.WithToken(cfg.AIDRToken),
 	)
 
 	// Create callout service
 	calloutService := server.NewCalloutService(server.CalloutServiceParams{
-		AIRDClient:          server.NewAIRDClientWrapper(&aidrClient),
+		AIDRClient:          server.NewAIDRClientWrapper(&aidrClient),
 		CollectorInstanceID: cfg.CollectorInstanceID,
 		Logger:              logger,
 		DebugMode:           cfg.DebugMode,

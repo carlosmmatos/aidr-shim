@@ -15,13 +15,13 @@ import (
 	"github.com/crowdstrike/aidr-go"
 )
 
-// mockAIRDClient implements AIRDClient for testing.
-type mockAIRDClient struct {
+// mockAIDRClient implements AIDRClient for testing.
+type mockAIDRClient struct {
 	response *aidr.AIGuardGuardChatCompletionsResponse
 	err      error
 }
 
-func (m *mockAIRDClient) GuardChatCompletions(_ context.Context, _ aidr.AIGuardGuardChatCompletionsParams) (*aidr.AIGuardGuardChatCompletionsResponse, error) {
+func (m *mockAIDRClient) GuardChatCompletions(_ context.Context, _ aidr.AIGuardGuardChatCompletionsParams) (*aidr.AIGuardGuardChatCompletionsResponse, error) {
 	return m.response, m.err
 }
 
@@ -60,7 +60,7 @@ func newTestLogger() *slog.Logger {
 func TestCalloutService_AllowedRequest(t *testing.T) {
 	t.Parallel()
 	// Create mock client that allows the request
-	mockClient := &mockAIRDClient{
+	mockClient := &mockAIDRClient{
 		response: &aidr.AIGuardGuardChatCompletionsResponse{
 			RequestID:    "test-request-id",
 			RequestTime:  time.Now(),
@@ -74,7 +74,7 @@ func TestCalloutService_AllowedRequest(t *testing.T) {
 	}
 
 	service := NewCalloutService(CalloutServiceParams{
-		AIRDClient:          mockClient,
+		AIDRClient:          mockClient,
 		CollectorInstanceID: "test-instance",
 		Logger:              newTestLogger(),
 		DebugMode:           false,
@@ -126,7 +126,7 @@ func TestCalloutService_AllowedRequest(t *testing.T) {
 func TestCalloutService_BlockedRequest(t *testing.T) {
 	t.Parallel()
 	// Create mock client that blocks the request
-	mockClient := &mockAIRDClient{
+	mockClient := &mockAIDRClient{
 		response: &aidr.AIGuardGuardChatCompletionsResponse{
 			RequestID:    "test-request-id",
 			RequestTime:  time.Now(),
@@ -140,7 +140,7 @@ func TestCalloutService_BlockedRequest(t *testing.T) {
 	}
 
 	service := NewCalloutService(CalloutServiceParams{
-		AIRDClient:          mockClient,
+		AIDRClient:          mockClient,
 		CollectorInstanceID: "test-instance",
 		Logger:              newTestLogger(),
 		DebugMode:           false,
@@ -207,7 +207,7 @@ func TestCalloutService_TransformedRequest(t *testing.T) {
 		},
 	}
 
-	mockClient := &mockAIRDClient{
+	mockClient := &mockAIDRClient{
 		response: &aidr.AIGuardGuardChatCompletionsResponse{
 			RequestID:    "test-request-id",
 			RequestTime:  time.Now(),
@@ -222,7 +222,7 @@ func TestCalloutService_TransformedRequest(t *testing.T) {
 	}
 
 	service := NewCalloutService(CalloutServiceParams{
-		AIRDClient:          mockClient,
+		AIDRClient:          mockClient,
 		CollectorInstanceID: "test-instance",
 		Logger:              newTestLogger(),
 		DebugMode:           false,
@@ -303,7 +303,7 @@ func TestCalloutService_TransformedRequest(t *testing.T) {
 func TestCalloutService_ResponseBlocked(t *testing.T) {
 	t.Parallel()
 	// Create mock client that blocks the response
-	mockClient := &mockAIRDClient{
+	mockClient := &mockAIDRClient{
 		response: &aidr.AIGuardGuardChatCompletionsResponse{
 			RequestID:    "test-request-id",
 			RequestTime:  time.Now(),
@@ -317,7 +317,7 @@ func TestCalloutService_ResponseBlocked(t *testing.T) {
 	}
 
 	service := NewCalloutService(CalloutServiceParams{
-		AIRDClient:          mockClient,
+		AIDRClient:          mockClient,
 		CollectorInstanceID: "test-instance",
 		Logger:              newTestLogger(),
 		DebugMode:           false,
@@ -380,15 +380,15 @@ func TestCalloutService_ResponseBlocked(t *testing.T) {
 	}
 }
 
-func TestCalloutService_AIRDError(t *testing.T) {
+func TestCalloutService_AIDRError(t *testing.T) {
 	t.Parallel()
 	// Create mock client that returns an error
-	mockClient := &mockAIRDClient{
+	mockClient := &mockAIDRClient{
 		err: context.DeadlineExceeded,
 	}
 
 	service := NewCalloutService(CalloutServiceParams{
-		AIRDClient:          mockClient,
+		AIDRClient:          mockClient,
 		CollectorInstanceID: "test-instance",
 		Logger:              newTestLogger(),
 		DebugMode:           false,
@@ -439,10 +439,10 @@ func TestCalloutService_AIRDError(t *testing.T) {
 
 func TestCalloutService_InvalidJSON(t *testing.T) {
 	t.Parallel()
-	mockClient := &mockAIRDClient{}
+	mockClient := &mockAIDRClient{}
 
 	service := NewCalloutService(CalloutServiceParams{
-		AIRDClient:          mockClient,
+		AIDRClient:          mockClient,
 		CollectorInstanceID: "test-instance",
 		Logger:              newTestLogger(),
 		DebugMode:           false,
@@ -487,10 +487,10 @@ func TestCalloutService_InvalidJSON(t *testing.T) {
 
 func TestCalloutService_Headers(t *testing.T) {
 	t.Parallel()
-	mockClient := &mockAIRDClient{}
+	mockClient := &mockAIDRClient{}
 
 	service := NewCalloutService(CalloutServiceParams{
-		AIRDClient:          mockClient,
+		AIDRClient:          mockClient,
 		CollectorInstanceID: "test-instance",
 		Logger:              newTestLogger(),
 		DebugMode:           false,
@@ -538,7 +538,7 @@ func TestCalloutService_Headers(t *testing.T) {
 func TestBuildGuardInput(t *testing.T) {
 	t.Parallel()
 	service := NewCalloutService(CalloutServiceParams{
-		AIRDClient:          nil,
+		AIDRClient:          nil,
 		CollectorInstanceID: "",
 		Logger:              newTestLogger(),
 		DebugMode:           false,
@@ -624,7 +624,7 @@ func TestBuildGuardInput(t *testing.T) {
 func TestCalloutService_EchoMode(t *testing.T) {
 	t.Parallel()
 	// Create a mock client that would block - but echo mode should bypass it
-	mockClient := &mockAIRDClient{
+	mockClient := &mockAIDRClient{
 		response: &aidr.AIGuardGuardChatCompletionsResponse{
 			Result: aidr.AIGuardGuardChatCompletionsResponseResult{
 				Blocked: true,
@@ -634,7 +634,7 @@ func TestCalloutService_EchoMode(t *testing.T) {
 
 	// Enable echo mode
 	service := NewCalloutService(CalloutServiceParams{
-		AIRDClient:          mockClient,
+		AIDRClient:          mockClient,
 		CollectorInstanceID: "test-instance",
 		Logger:              newTestLogger(),
 		DebugMode:           false,

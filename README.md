@@ -21,7 +21,7 @@ User → Google Load Balancer → ext_proc (this shim) → AIDR API
 ### Prerequisites
 
 - GCP project with billing enabled
-- CrowdStrike AIDR credentials (base URL and bearer token)
+- CrowdStrike AIDR credentials (cloud region and bearer token)
 - [gcloud CLI](https://cloud.google.com/sdk/docs/install) or Google Cloud Shell
 
 ### Deploy in 2 Minutes
@@ -48,7 +48,7 @@ The deployment script will:
 
 ```bash
 export PROJECT_ID="your-project-id"
-export AIDR_BASE_URL="https://api.crowdstrike.com/aidr/aiguard"
+export AIDR_CLOUD="us-1"
 export AIDR_TOKEN="your-bearer-token"
 
 ./scripts/deploy.sh
@@ -134,7 +134,7 @@ Key environment variables:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `AIDR_BASE_URL` | Yes | AIDR API endpoint |
+| `AIDR_CLOUD` | Yes | Falcon cloud region (e.g. us-1, us-2, eu-1) |
 | `AIDR_TOKEN` | Yes | Bearer token for authentication |
 | `LOG_LEVEL` | No | debug, info, warn, error (default: info) |
 | `DEBUG_MODE` | No | Enable verbose logging (default: false) |

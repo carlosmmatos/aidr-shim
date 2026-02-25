@@ -19,13 +19,13 @@ import (
 	"github.com/crowdstrike/aidr-go/packages/param"
 )
 
-// AIRDClient defines the interface for AIDR operations.
+// AIDRClient defines the interface for AIDR operations.
 // This allows for mocking in tests.
-type AIRDClient interface {
+type AIDRClient interface {
 	GuardChatCompletions(ctx context.Context, params aidr.AIGuardGuardChatCompletionsParams) (*aidr.AIGuardGuardChatCompletionsResponse, error)
 }
 
-// aidrClientWrapper wraps the real AIDR client to implement AIRDClient.
+// aidrClientWrapper wraps the real AIDR client to implement AIDRClient.
 type aidrClientWrapper struct {
 	client *aidr.Client
 }
@@ -34,15 +34,15 @@ func (w *aidrClientWrapper) GuardChatCompletions(ctx context.Context, params aid
 	return w.client.AIGuard.GuardChatCompletions(ctx, params)
 }
 
-// NewAIRDClientWrapper creates a new wrapper around the AIDR client.
-func NewAIRDClientWrapper(client *aidr.Client) AIRDClient {
+// NewAIDRClientWrapper creates a new wrapper around the AIDR client.
+func NewAIDRClientWrapper(client *aidr.Client) AIDRClient {
 	return &aidrClientWrapper{client: client}
 }
 
 // CalloutService implements the Envoy ExternalProcessor gRPC service.
 type CalloutService struct {
 	extprocv3.UnimplementedExternalProcessorServer
-	aidrClient          AIRDClient
+	aidrClient          AIDRClient
 	collectorInstanceID string
 	logger              *slog.Logger
 	debugMode           bool
@@ -51,7 +51,7 @@ type CalloutService struct {
 
 // NewCalloutServiceParams contains parameters for creating a CalloutService.
 type CalloutServiceParams struct {
-	AIRDClient          AIRDClient
+	AIDRClient          AIDRClient
 	CollectorInstanceID string
 	Logger              *slog.Logger
 	DebugMode           bool
@@ -61,7 +61,7 @@ type CalloutServiceParams struct {
 // NewCalloutService creates a new CalloutService.
 func NewCalloutService(cs CalloutServiceParams) *CalloutService {
 	return &CalloutService{
-		aidrClient:          cs.AIRDClient,
+		aidrClient:          cs.AIDRClient,
 		collectorInstanceID: cs.CollectorInstanceID,
 		logger:              cs.Logger,
 		debugMode:           cs.DebugMode,

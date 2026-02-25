@@ -31,7 +31,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --source . \
     --region="$REGION" \
     --set-env-vars="DEBUG_MODE=true,LOG_LEVEL=debug" \
-    --set-secrets="AIDR_BASE_URL=aidr-base-url:latest,AIDR_TOKEN=aidr-token:latest" \
+    --set-secrets="AIDR_CLOUD=aidr-cloud:latest,AIDR_TOKEN=aidr-token:latest" \
     --allow-unauthenticated \
     --port=8080 \
     --cpu=1 \

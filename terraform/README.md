@@ -35,7 +35,7 @@ Create a `terraform.tfvars` file:
 ```hcl
 project_id    = "your-gcp-project-id"
 region        = "us-central1"
-aidr_base_url = "https://api.crowdstrike.com/aidr/aiguard"
+aidr_cloud    = "us-1"
 aidr_token    = "your-aidr-bearer-token"
 container_image = "gcr.io/your-project-id/aidr-shim:latest"
 ```
@@ -52,7 +52,7 @@ terraform apply
 
 ```bash
 export TF_VAR_project_id="your-gcp-project-id"
-export TF_VAR_aidr_base_url="https://api.crowdstrike.com/aidr/aiguard"
+export TF_VAR_aidr_cloud="us-1"
 export TF_VAR_aidr_token="your-aidr-bearer-token"
 export TF_VAR_container_image="gcr.io/your-project-id/aidr-shim:latest"
 
@@ -71,7 +71,7 @@ region        = "us-central1"
 service_name  = "aidr-shim"
 
 # AIDR credentials
-aidr_base_url = "https://api.crowdstrike.com/aidr/aiguard"
+aidr_cloud    = "us-1"
 aidr_token    = "your-aidr-bearer-token"
 
 # Container image
@@ -100,7 +100,7 @@ collector_instance_id = "prod-us-central1"
 | `project_id` | Yes | - | GCP project ID |
 | `region` | No | `us-central1` | Cloud Run region |
 | `service_name` | No | `aidr-shim` | Cloud Run service name |
-| `aidr_base_url` | Yes | - | AIDR API base URL |
+| `aidr_cloud` | Yes | - | Falcon cloud region (e.g. us-1) |
 | `aidr_token` | Yes | - | AIDR bearer token |
 | `container_image` | Yes | - | Container image to deploy |
 | `min_instances` | No | `0` | Minimum instances |
@@ -124,7 +124,7 @@ collector_instance_id = "prod-us-central1"
 ## Resources Created
 
 - **Cloud Run Service**: The AIDR ext_proc shim
-- **Secret Manager Secrets**: For AIDR credentials (base URL and token)
+- **Secret Manager Secrets**: For AIDR credentials (cloud region and token)
 - **IAM Bindings**: For Cloud Run to access secrets
 - **Project Services**: Enables required APIs
 

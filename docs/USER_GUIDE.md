@@ -90,7 +90,7 @@ Before deploying, ensure you have:
 ### 2. CrowdStrike AIDR Credentials
 
 From your CrowdStrike Falcon console:
-- **AIDR API Base URL**: Usually `https://api.crowdstrike.com/aidr/aiguard`
+- **AIDR Cloud Region**: Your Falcon cloud region (e.g. `us-1`, `us-2`, `eu-1`)
 - **Bearer Token**: API authentication token
 
 Contact your CrowdStrike representative if you need help obtaining these.
@@ -144,7 +144,7 @@ The interactive script will prompt for:
 - **GCP Project ID**: Your project (auto-detected if configured)
 - **Region**: Where to deploy (default: us-central1)
 - **Service name**: Cloud Run service name (default: aidr-shim)
-- **AIDR Base URL**: Your AIDR API endpoint
+- **AIDR Cloud Region**: Your Falcon cloud region (e.g. us-1)
 - **AIDR Token**: Your bearer token
 
 ### Step 5: Note the Service URL
@@ -167,7 +167,7 @@ For automation or CI/CD, use environment variables:
 export PROJECT_ID="my-project"
 export REGION="us-central1"
 export SERVICE_NAME="aidr-shim"
-export AIDR_BASE_URL="https://api.crowdstrike.com/aidr/aiguard"
+export AIDR_CLOUD="us-1"
 export AIDR_TOKEN="your-bearer-token"
 
 ./scripts/deploy.sh
@@ -194,7 +194,7 @@ Create `terraform/terraform.tfvars`:
 project_id      = "your-gcp-project-id"
 region          = "us-central1"
 service_name    = "aidr-shim"
-aidr_base_url   = "https://api.crowdstrike.com/aidr/aiguard"
+aidr_cloud      = "us-1"
 aidr_token      = "your-aidr-bearer-token"
 container_image = "gcr.io/your-project-id/aidr-shim:latest"
 
@@ -249,7 +249,7 @@ See [CONFIGURATION.md](CONFIGURATION.md) for detailed configuration options.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `AIDR_BASE_URL` | Yes | - | AIDR API endpoint |
+| `AIDR_CLOUD` | Yes | - | Falcon cloud region (e.g. us-1) |
 | `AIDR_TOKEN` | Yes | - | Bearer token |
 | `LOG_LEVEL` | No | `info` | Logging level |
 | `DEBUG_MODE` | No | `false` | Verbose logging |
@@ -346,14 +346,14 @@ Enable `DEBUG_MODE=true` to log full request/response bodies. **Warning**: This 
 
 ### Common Issues
 
-#### 1. "AIDR_BASE_URL is required" Error
+#### 1. "AIDR_CLOUD is required" Error
 
 **Cause**: Secret Manager secrets not accessible.
 
 **Solution**: Verify secrets exist and have correct IAM bindings:
 ```bash
 gcloud secrets list --project=YOUR_PROJECT_ID
-gcloud secrets describe aidr-base-url --project=YOUR_PROJECT_ID
+gcloud secrets describe aidr-cloud --project=YOUR_PROJECT_ID
 ```
 
 #### 2. Connection Timeout to AIDR API
@@ -361,7 +361,7 @@ gcloud secrets describe aidr-base-url --project=YOUR_PROJECT_ID
 **Cause**: Network issues or incorrect URL.
 
 **Solution**:
-1. Verify `AIDR_BASE_URL` is correct
+1. Verify `AIDR_CLOUD` is a valid cloud region (us-1, us-2, eu-1, us-gov-1, us-gov-2)
 2. Check Cloud Run has outbound internet access
 3. Verify AIDR service is operational
 

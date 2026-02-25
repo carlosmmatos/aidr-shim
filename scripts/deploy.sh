@@ -3,7 +3,7 @@
 #
 # Usage:
 #   Interactive: ./scripts/deploy.sh
-#   Non-interactive: AIDR_BASE_URL=... AIDR_TOKEN=... ./scripts/deploy.sh
+#   Non-interactive: AIDR_CLOUD=... AIDR_TOKEN=... ./scripts/deploy.sh
 #
 # This script will:
 #   1. Validate prerequisites (APIs, permissions, authentication)
@@ -15,7 +15,7 @@
 #   PROJECT_ID      - GCP project ID (defaults to current gcloud config)
 #   REGION          - Cloud Run region (default: us-central1)
 #   SERVICE_NAME    - Cloud Run service name (default: aidr-shim)
-#   AIDR_BASE_URL   - AIDR API base URL (required)
+#   AIDR_CLOUD      - Falcon cloud region (e.g. us-1, us-2, eu-1) (required)
 #   AIDR_TOKEN      - AIDR bearer token (required)
 #   MIN_INSTANCES   - Minimum instances (default: 0)
 #   MAX_INSTANCES   - Maximum instances (default: 10)
@@ -197,11 +197,11 @@ main() {
     # Step 5: Get AIDR credentials
     echo ""
     info "AIDR API credentials:"
-    prompt AIDR_BASE_URL "AIDR API base URL (e.g., https://api.crowdstrike.com/aidr/aiguard)"
+    prompt AIDR_CLOUD "Falcon cloud region (e.g., us-1, us-2, eu-1, us-gov-1, us-gov-2)"
     prompt AIDR_TOKEN "AIDR bearer token" "" "true"
 
-    if [[ -z "$AIDR_BASE_URL" ]]; then
-        error "AIDR_BASE_URL is required"
+    if [[ -z "$AIDR_CLOUD" ]]; then
+        error "AIDR_CLOUD is required"
         exit 1
     fi
 
@@ -213,7 +213,7 @@ main() {
     # Step 6: Create/update secrets
     echo ""
     info "Setting up Secret Manager secrets..."
-    create_or_update_secret "$PROJECT_ID" "aidr-base-url" "$AIDR_BASE_URL"
+    create_or_update_secret "$PROJECT_ID" "aidr-cloud" "$AIDR_CLOUD"
     create_or_update_secret "$PROJECT_ID" "aidr-token" "$AIDR_TOKEN"
     success "Secrets configured"
 
@@ -232,7 +232,7 @@ main() {
         --source . \
         --region="$REGION" \
         --set-env-vars="LOG_LEVEL=info" \
-        --set-secrets="AIDR_BASE_URL=aidr-base-url:latest,AIDR_TOKEN=aidr-token:latest" \
+        --set-secrets="AIDR_CLOUD=aidr-cloud:latest,AIDR_TOKEN=aidr-token:latest" \
         --allow-unauthenticated \
         --port=8080 \
         --cpu=1 \

@@ -15,8 +15,8 @@ variable "service_name" {
   default     = "aidr-shim"
 }
 
-variable "aidr_base_url" {
-  description = "AIDR API base URL (e.g., https://api.crowdstrike.com/aidr/aiguard)"
+variable "aidr_cloud" {
+  description = "CrowdStrike Falcon cloud region (e.g., us-1, us-2, eu-1, us-gov-1, us-gov-2)"
   type        = string
   sensitive   = true
 }
