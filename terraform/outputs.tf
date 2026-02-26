@@ -22,6 +22,6 @@ output "secret_ids" {
   description = "Secret Manager secret IDs for AIDR credentials"
   value = {
     cloud = google_secret_manager_secret.aidr_cloud.secret_id
-    token    = google_secret_manager_secret.aidr_token.secret_id
+    token = google_secret_manager_secret.aidr_token.secret_id
   }
 }

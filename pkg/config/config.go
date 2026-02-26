@@ -48,7 +48,7 @@ func Load() (*Config, error) {
 	if cloudStr == "" {
 		return nil, fmt.Errorf("AIDR_CLOUD environment variable is required")
 	}
-	cloudURL, err := parsecloud(cloudStr)
+	cloudURL, err := parseCloud(cloudStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid AIDR_CLOUD: %w", err)
 	}
@@ -88,9 +88,9 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// parsecloud normalizes and validates a cloud region string.
+// parseCloud normalizes and validates a cloud region string.
 // It accepts formats like "us-1", "Us-1", "US1", " us-1 ", etc.
-func parsecloud(s string) (string, error) {
+func parseCloud(s string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(s))
 	stripped := strings.ReplaceAll(normalized, "-", "")
 

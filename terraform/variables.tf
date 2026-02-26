@@ -18,7 +18,6 @@ variable "service_name" {
 variable "aidr_cloud" {
   description = "CrowdStrike Falcon cloud region (e.g., us-1, us-2, eu-1, us-gov-1, us-gov-2)"
   type        = string
-  sensitive   = true
 }
 
 variable "aidr_token" {

@@ -49,7 +49,7 @@ type CalloutService struct {
 	echoMode            bool
 }
 
-// NewCalloutServiceParams contains parameters for creating a CalloutService.
+// CalloutServiceParams contains parameters for creating a CalloutService.
 type CalloutServiceParams struct {
 	AIDRClient          AIDRClient
 	CollectorInstanceID string
