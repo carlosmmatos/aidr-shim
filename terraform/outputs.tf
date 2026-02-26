@@ -21,7 +21,7 @@ output "project_id" {
 output "secret_ids" {
   description = "Secret Manager secret IDs for AIDR credentials"
   value = {
-    base_url = google_secret_manager_secret.aidr_base_url.secret_id
-    token    = google_secret_manager_secret.aidr_token.secret_id
+    cloud = google_secret_manager_secret.aidr_cloud.secret_id
+    token = google_secret_manager_secret.aidr_token.secret_id
   }
 }

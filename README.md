@@ -1,6 +1,10 @@
 # AIDR GCP ext_proc Shim
 
-A gRPC service that integrates [CrowdStrike AIDR](https://www.crowdstrike.com/) (AI Detection & Response) with Google Cloud Load Balancer's [external processing](https://cloud.google.com/load-balancing/docs/https/ext-proc-overview) (ext_proc) extension.
+A gRPC service that integrates
+[CrowdStrike AIDR](https://www.crowdstrike.com/) (AI Detection & Response)
+with Google Cloud Load Balancer's
+[external processing](https://cloud.google.com/load-balancing/docs/https/ext-proc-overview)
+(ext_proc) extension.
 
 ## Overview
 
@@ -10,10 +14,14 @@ This shim enables real-time protection for AI workloads by:
 - **Preventing data leakage** by identifying PII and sensitive data in requests/responses
 - **Enforcing security policies** defined in CrowdStrike Falcon
 
-```text
-User → Google Load Balancer → ext_proc (this shim) → AIDR API
-                ↓                                        ↓
-         Your AI App ←────────── Allow/Block/Transform ──┘
+```mermaid
+flowchart LR
+    User([User]) -->|Request| LB[Cloud Load\nBalancer]
+    LB -->|ext_proc\ngRPC| Shim[AIDR\next_proc Shim]
+    Shim -->|Analyze| AIDR[CrowdStrike\nAIDR API]
+    AIDR -->|Verdict| Shim
+    Shim -->|Allow / Block\nTransform| LB
+    LB -->|Forward| App[Your AI App]
 ```
 
 ## Quick Start
@@ -21,7 +29,7 @@ User → Google Load Balancer → ext_proc (this shim) → AIDR API
 ### Prerequisites
 
 - GCP project with billing enabled
-- CrowdStrike AIDR credentials (base URL and bearer token)
+- CrowdStrike AIDR credentials (cloud region and bearer token)
 - [gcloud CLI](https://cloud.google.com/sdk/docs/install) or Google Cloud Shell
 
 ### Deploy in 2 Minutes
@@ -29,7 +37,7 @@ User → Google Load Balancer → ext_proc (this shim) → AIDR API
 ```bash
 # 1. Clone the repository
 git clone <repository-url>
-cd gcp-shim
+cd aidr-shim
 
 # 2. Set up prerequisites
 ./scripts/setup-prerequisites.sh
@@ -39,6 +47,7 @@ cd gcp-shim
 ```
 
 The deployment script will:
+
 1. Validate your GCP environment
 2. Create secrets in Secret Manager
 3. Deploy to Cloud Run
@@ -48,7 +57,7 @@ The deployment script will:
 
 ```bash
 export PROJECT_ID="your-project-id"
-export AIDR_BASE_URL="https://api.crowdstrike.com/aidr/aiguard"
+export AIDR_CLOUD="us-1"
 export AIDR_TOKEN="your-bearer-token"
 
 ./scripts/deploy.sh
@@ -60,6 +69,7 @@ export AIDR_TOKEN="your-bearer-token"
 |----------|-------------|
 | [User Guide](docs/USER_GUIDE.md) | Complete deployment and usage guide |
 | [Configuration](docs/CONFIGURATION.md) | All configuration options |
+| [Development](docs/DEVELOPMENT.md) | Local development guide |
 | [Terraform](terraform/README.md) | Infrastructure-as-code deployment |
 
 ## Deployment Options
@@ -90,7 +100,7 @@ Test your deployment with the included test client:
 
 ```bash
 # Build test client
-go build -o testclient ./cmd/testclient
+go build -o testclient ./test/client
 
 # Test a payload
 ./testclient \
@@ -108,10 +118,9 @@ go build -o testclient ./cmd/testclient
 
 ## Project Structure
 
-```
+```text
 ├── cmd/
-│   ├── shim/           # Main service
-│   └── testclient/     # Test client
+│   └── shim/           # Main service
 ├── pkg/
 │   └── config/         # Configuration
 ├── internal/
@@ -119,10 +128,13 @@ go build -o testclient ./cmd/testclient
 ├── scripts/
 │   ├── deploy.sh           # Production deployment
 │   ├── deploy-debug.sh     # Debug deployment
-│   └── setup-prerequisites.sh
+│   ├── setup-prerequisites.sh
+│   ├── test-cloud-run.sh   # Cloud Run smoke tests
+│   └── cleanup.sh          # Resource cleanup
 ├── terraform/          # Terraform module
 ├── test/
-│   └── testdata/       # Test payloads
+│   ├── client/        # Test client
+│   └── testdata/      # Test payloads
 ├── docs/               # Documentation
 ├── Dockerfile
 └── README.md
@@ -134,7 +146,7 @@ Key environment variables:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `AIDR_BASE_URL` | Yes | AIDR API endpoint |
+| `AIDR_CLOUD` | Yes | Falcon cloud region (e.g. us-1, us-2, eu-1) |
 | `AIDR_TOKEN` | Yes | Bearer token for authentication |
 | `LOG_LEVEL` | No | debug, info, warn, error (default: info) |
 | `DEBUG_MODE` | No | Enable verbose logging (default: false) |
@@ -145,7 +157,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for all options.
 
 1. **Configure Load Balancer**: Provide the service URL to Google for ext_proc configuration
 2. **Set Up Policies**: Configure AIDR policies in CrowdStrike Falcon console
-3. **Monitor**: View logs with `gcloud run services logs tail aidr-shim`
+3. **Monitor**: View logs with `gcloud run services logs read aidr-shim --limit=50`
 
 ## License
 

@@ -3,7 +3,7 @@
 #
 # Usage:
 #   Interactive: ./scripts/deploy.sh
-#   Non-interactive: AIDR_BASE_URL=... AIDR_TOKEN=... ./scripts/deploy.sh
+#   Non-interactive: AIDR_CLOUD=... AIDR_TOKEN=... ./scripts/deploy.sh
 #
 # This script will:
 #   1. Validate prerequisites (APIs, permissions, authentication)
@@ -15,7 +15,7 @@
 #   PROJECT_ID      - GCP project ID (defaults to current gcloud config)
 #   REGION          - Cloud Run region (default: us-central1)
 #   SERVICE_NAME    - Cloud Run service name (default: aidr-shim)
-#   AIDR_BASE_URL   - AIDR API base URL (required)
+#   AIDR_CLOUD      - Falcon cloud region (e.g. us-1, us-2, eu-1) (required)
 #   AIDR_TOKEN      - AIDR bearer token (required)
 #   MIN_INSTANCES   - Minimum instances (default: 0)
 #   MAX_INSTANCES   - Maximum instances (default: 10)
@@ -197,11 +197,11 @@ main() {
     # Step 5: Get AIDR credentials
     echo ""
     info "AIDR API credentials:"
-    prompt AIDR_BASE_URL "AIDR API base URL (e.g., https://api.crowdstrike.com/aidr/aiguard)"
+    prompt AIDR_CLOUD "Falcon cloud region (e.g., us-1, us-2, eu-1, us-gov-1, us-gov-2)"
     prompt AIDR_TOKEN "AIDR bearer token" "" "true"
 
-    if [[ -z "$AIDR_BASE_URL" ]]; then
-        error "AIDR_BASE_URL is required"
+    if [[ -z "$AIDR_CLOUD" ]]; then
+        error "AIDR_CLOUD is required"
         exit 1
     fi
 
@@ -213,9 +213,24 @@ main() {
     # Step 6: Create/update secrets
     echo ""
     info "Setting up Secret Manager secrets..."
-    create_or_update_secret "$PROJECT_ID" "aidr-base-url" "$AIDR_BASE_URL"
+    create_or_update_secret "$PROJECT_ID" "aidr-cloud" "$AIDR_CLOUD"
     create_or_update_secret "$PROJECT_ID" "aidr-token" "$AIDR_TOKEN"
     success "Secrets configured"
+
+    # Step 6b: Grant Cloud Run service account access to secrets
+    info "Granting Secret Manager access to Cloud Run service account..."
+    local project_number
+    project_number=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+    local sa="${project_number}-compute@developer.gserviceaccount.com"
+
+    for secret in aidr-cloud aidr-token; do
+        gcloud secrets add-iam-policy-binding "$secret" \
+            --project="$PROJECT_ID" \
+            --member="serviceAccount:${sa}" \
+            --role="roles/secretmanager.secretAccessor" \
+            --quiet
+    done
+    success "Secret Manager access granted to ${sa}"
 
     # Step 7: Deploy to Cloud Run
     echo ""
@@ -232,7 +247,7 @@ main() {
         --source . \
         --region="$REGION" \
         --set-env-vars="LOG_LEVEL=info" \
-        --set-secrets="AIDR_BASE_URL=aidr-base-url:latest,AIDR_TOKEN=aidr-token:latest" \
+        --set-secrets="AIDR_CLOUD=aidr-cloud:latest,AIDR_TOKEN=aidr-token:latest" \
         --allow-unauthenticated \
         --port=8080 \
         --cpu=1 \
@@ -257,7 +272,7 @@ main() {
     echo ""
     echo "Service URL (provide this to Google for Load Balancer configuration):"
     echo ""
-    echo "  ${GREEN}${SERVICE_URL}${NC}"
+    echo -e "  ${GREEN}${SERVICE_URL}${NC}"
     echo ""
     echo "Next steps:"
     echo "  1. Provide the service URL to Google for Load Balancer ext_proc configuration"
@@ -265,10 +280,10 @@ main() {
     echo ""
     echo "Useful commands:"
     echo "  View logs:"
-    echo "    gcloud run services logs tail $SERVICE_NAME --region=$REGION --project=$PROJECT_ID"
+    echo "    gcloud run services logs read $SERVICE_NAME --region=$REGION --project=$PROJECT_ID --limit=50"
     echo ""
     echo "  Test the deployment:"
-    echo "    go run ./cmd/testclient --address=${SERVICE_URL#https://}:443 --tls --payload=test/testdata/clean_request.json"
+    echo "    go run ./test/client --address=${SERVICE_URL#https://}:443 --tls --payload=test/testdata/clean_request.json"
     echo ""
 }
 

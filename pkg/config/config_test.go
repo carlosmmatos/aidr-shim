@@ -9,14 +9,14 @@ func TestLoad_RequiredFields(t *testing.T) {
 	// Clear environment
 	os.Clearenv()
 
-	// Missing AIDR_BASE_URL should fail
+	// Missing AIDR_CLOUD should fail
 	_, err := Load()
 	if err == nil {
-		t.Fatal("expected error when AIDR_BASE_URL is missing")
+		t.Fatal("expected error when AIDR_CLOUD is missing")
 	}
 
-	// Set AIDR_BASE_URL but missing AIDR_TOKEN
-	os.Setenv("AIDR_BASE_URL", "https://api.crowdstrike.com/aidr/aiguard")
+	// Set AIDR_CLOUD but missing AIDR_TOKEN
+	os.Setenv("AIDR_CLOUD", "us-1")
 	_, err = Load()
 	if err == nil {
 		t.Fatal("expected error when AIDR_TOKEN is missing")
@@ -29,17 +29,57 @@ func TestLoad_RequiredFields(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.AIRDBaseURL != "https://api.crowdstrike.com/aidr/aiguard" {
-		t.Errorf("unexpected base URL: %s", cfg.AIRDBaseURL)
+	if cfg.AIDRCloud != "https://api.crowdstrike.com/aidr/aiguard" {
+		t.Errorf("unexpected base URL: %s", cfg.AIDRCloud)
 	}
-	if cfg.AIRDToken != "test-token" {
-		t.Errorf("unexpected token: %s", cfg.AIRDToken)
+	if cfg.AIDRToken != "test-token" {
+		t.Errorf("unexpected token: %s", cfg.AIDRToken)
+	}
+}
+
+func TestLoad_InvalidCloud(t *testing.T) {
+	os.Clearenv()
+	os.Setenv("AIDR_CLOUD", "invalid-region")
+	os.Setenv("AIDR_TOKEN", "test-token")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid AIDR_CLOUD")
+	}
+}
+
+func TestLoad_CloudRegions(t *testing.T) {
+	tests := []struct {
+		cloud   string
+		wantURL string
+	}{
+		{"us-1", "https://api.crowdstrike.com/aidr/aiguard"},
+		{"us-2", "https://api.us-2.crowdstrike.com/aidr/aiguard"},
+		{"eu-1", "https://api.eu-1.crowdstrike.com/aidr/aiguard"},
+		{"us-gov-1", "https://api.laggar.gcw.crowdstrike.com/aidr/aiguard"},
+		{"us-gov-2", "https://api.us-gov-2.crowdstrike.mil/aidr/aiguard"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.cloud, func(t *testing.T) {
+			os.Clearenv()
+			os.Setenv("AIDR_CLOUD", tt.cloud)
+			os.Setenv("AIDR_TOKEN", "test-token")
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.AIDRCloud != tt.wantURL {
+				t.Errorf("AIDR_CLOUD=%s: got base URL %q, want %q", tt.cloud, cfg.AIDRCloud, tt.wantURL)
+			}
+		})
 	}
 }
 
 func TestLoad_Defaults(t *testing.T) {
 	os.Clearenv()
-	os.Setenv("AIDR_BASE_URL", "https://api.crowdstrike.com/aidr/aiguard")
+	os.Setenv("AIDR_CLOUD", "us-1")
 	os.Setenv("AIDR_TOKEN", "test-token")
 
 	cfg, err := Load()
@@ -63,7 +103,7 @@ func TestLoad_Defaults(t *testing.T) {
 
 func TestLoad_CustomPorts(t *testing.T) {
 	os.Clearenv()
-	os.Setenv("AIDR_BASE_URL", "https://api.crowdstrike.com/aidr/aiguard")
+	os.Setenv("AIDR_CLOUD", "us-1")
 	os.Setenv("AIDR_TOKEN", "test-token")
 	os.Setenv("GRPC_PORT", "9090")
 	os.Setenv("HEALTH_PORT", "9091")
@@ -83,7 +123,7 @@ func TestLoad_CustomPorts(t *testing.T) {
 
 func TestLoad_InvalidPorts(t *testing.T) {
 	os.Clearenv()
-	os.Setenv("AIDR_BASE_URL", "https://api.crowdstrike.com/aidr/aiguard")
+	os.Setenv("AIDR_CLOUD", "us-1")
 	os.Setenv("AIDR_TOKEN", "test-token")
 	os.Setenv("GRPC_PORT", "invalid")
 
@@ -103,7 +143,7 @@ func TestLoad_InvalidPorts(t *testing.T) {
 
 func TestLoad_OptionalFields(t *testing.T) {
 	os.Clearenv()
-	os.Setenv("AIDR_BASE_URL", "https://api.crowdstrike.com/aidr/aiguard")
+	os.Setenv("AIDR_CLOUD", "us-1")
 	os.Setenv("AIDR_TOKEN", "test-token")
 	os.Setenv("COLLECTOR_INSTANCE_ID", "my-instance")
 	os.Setenv("LOG_LEVEL", "debug")
@@ -123,7 +163,7 @@ func TestLoad_OptionalFields(t *testing.T) {
 
 func TestLoad_DebugModes(t *testing.T) {
 	os.Clearenv()
-	os.Setenv("AIDR_BASE_URL", "https://api.crowdstrike.com/aidr/aiguard")
+	os.Setenv("AIDR_CLOUD", "us-1")
 	os.Setenv("AIDR_TOKEN", "test-token")
 
 	// Default: both disabled

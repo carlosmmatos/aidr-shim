@@ -69,7 +69,7 @@ if [[ -n "$SINGLE_FILE" ]]; then
     # Test single file
     echo "Testing single payload: $SINGLE_FILE"
     echo ""
-    go run ./cmd/testclient \
+    go run ./test/client \
         --address="$SERVICE_HOST:443" \
         --tls \
         --payload="$SINGLE_FILE"
@@ -77,7 +77,7 @@ else
     # Batch test all payloads
     echo "Running batch tests from test/testdata/"
     echo ""
-    go run ./cmd/testclient \
+    go run ./test/client \
         --address="$SERVICE_HOST:443" \
         --tls \
         --batch \
@@ -88,4 +88,4 @@ echo ""
 echo "=== Test complete ==="
 echo ""
 echo "To view logs:"
-echo "  gcloud run services logs tail $SERVICE_NAME --region=$REGION --project=$PROJECT_ID"
+echo "  gcloud run services logs read $SERVICE_NAME --region=$REGION --project=$PROJECT_ID --limit=50"

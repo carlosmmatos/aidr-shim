@@ -10,7 +10,7 @@ The shim is configured entirely through environment variables. In production, se
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `AIDR_BASE_URL` | Base URL for the AIDR API endpoint | `https://api.crowdstrike.com/aidr/aiguard` |
+| `AIDR_CLOUD` | CrowdStrike Falcon cloud region | `us-1` |
 | `AIDR_TOKEN` | Bearer token for AIDR API authentication | `eyJhbGciOiJIUzI1NiIs...` |
 
 ### Optional Variables
@@ -28,19 +28,20 @@ The shim is configured entirely through environment variables. In production, se
 
 ## Variable Details
 
-### AIDR_BASE_URL
+### AIDR_CLOUD
 
 **Required**: Yes
-**Type**: String (URL)
-**Secret**: Yes (store in Secret Manager)
+**Type**: String (cloud region identifier)
+**Secret**: No
 
-The base URL for the CrowdStrike AIDR API. This is provided by CrowdStrike when you set up AIDR.
+The CrowdStrike Falcon cloud region. The shim derives the full AIDR API base URL automatically from this value.
 
-**Format**: `https://<region>.api.crowdstrike.com/aidr/aiguard`
+**Valid values**: `us-1`, `us-2`, `eu-1`, `us-gov-1`, `us-gov-2`
 
 **Example**:
+
 ```bash
-AIDR_BASE_URL="https://api.crowdstrike.com/aidr/aiguard"
+AIDR_CLOUD="us-1"
 ```
 
 ### AIDR_TOKEN
@@ -54,6 +55,7 @@ The bearer token for authenticating with the AIDR API. Generate this in the Crow
 **Security**: Never commit this value to version control. Always use Secret Manager in production.
 
 **Example**:
+
 ```bash
 AIDR_TOKEN="your-bearer-token-here"
 ```
@@ -75,7 +77,9 @@ The port on which the gRPC ext_proc server listens. Cloud Run routes traffic to 
 **Default**: `8081`
 
 The port for the HTTP health check server. This exposes:
+
 - `GET /health` - Returns `{"status": "healthy"}` when ready
+- `GET /ready` - Returns `{"status": "ready"}` when the service is ready to accept traffic
 
 **Note**: Cloud Run uses TCP health checks by default, but you can configure HTTP health checks to use this endpoint.
 
@@ -96,6 +100,7 @@ Controls the verbosity of log output.
 | `error` | Errors only | Minimal logging |
 
 **Example**:
+
 ```bash
 LOG_LEVEL="debug"  # For troubleshooting
 LOG_LEVEL="warn"   # For high-volume production
@@ -113,6 +118,7 @@ Enables verbose debug logging including full request and response bodies.
 **Warning**: This may log sensitive data (PII, prompts, API responses). Use only for troubleshooting and disable in production.
 
 **Example**:
+
 ```bash
 DEBUG_MODE="true"  # Temporary troubleshooting
 DEBUG_MODE="false" # Normal operation
@@ -126,6 +132,7 @@ DEBUG_MODE="false" # Normal operation
 **Values**: `true`, `false`
 
 When enabled, the shim bypasses the AIDR API entirely and:
+
 - Logs all request/response payloads
 - Always returns "allow" decisions
 
@@ -142,11 +149,13 @@ When enabled, the shim bypasses the AIDR API entirely and:
 An optional identifier for this shim instance. Included in logs and AIDR API calls for correlation.
 
 **Use cases**:
+
 - Identifying traffic sources in multi-region deployments
 - Correlating logs with specific Cloud Run revisions
 - Debugging multi-instance scenarios
 
 **Example**:
+
 ```bash
 COLLECTOR_INSTANCE_ID="prod-us-central1-v2"
 ```
@@ -160,9 +169,9 @@ In production, store sensitive values in Google Secret Manager.
 ### Creating Secrets
 
 ```bash
-# Create AIDR base URL secret
-echo -n "https://api.crowdstrike.com/aidr/aiguard" | \
-  gcloud secrets create aidr-base-url --data-file=-
+# Create AIDR cloud secret
+echo -n "us-1" | \
+  gcloud secrets create aidr-cloud --data-file=-
 
 # Create AIDR token secret
 echo -n "your-bearer-token" | \
@@ -174,7 +183,7 @@ echo -n "your-bearer-token" | \
 ```bash
 # Add new version (previous versions remain accessible)
 echo -n "new-value" | \
-  gcloud secrets versions add aidr-base-url --data-file=-
+  gcloud secrets versions add aidr-cloud --data-file=-
 ```
 
 ### Cloud Run Secret Mounting
@@ -183,7 +192,7 @@ When deploying with the scripts or Terraform, secrets are automatically mounted:
 
 ```bash
 gcloud run deploy aidr-shim \
-  --set-secrets="AIDR_BASE_URL=aidr-base-url:latest,AIDR_TOKEN=aidr-token:latest"
+  --set-secrets="AIDR_CLOUD=aidr-cloud:latest,AIDR_TOKEN=aidr-token:latest"
 ```
 
 ---
@@ -194,7 +203,7 @@ Recommended resource configurations based on traffic volume:
 
 ### Development/Testing
 
-```
+```yaml
 cpu: 1
 memory: 256Mi
 min_instances: 0
@@ -203,7 +212,7 @@ max_instances: 2
 
 ### Low-Volume Production
 
-```
+```yaml
 cpu: 1
 memory: 512Mi
 min_instances: 0
@@ -212,7 +221,7 @@ max_instances: 10
 
 ### Medium-Volume Production
 
-```
+```yaml
 cpu: 1
 memory: 512Mi
 min_instances: 1      # Keep warm
@@ -221,7 +230,7 @@ max_instances: 50
 
 ### High-Volume Production
 
-```
+```yaml
 cpu: 2
 memory: 1Gi
 min_instances: 2      # Redundancy
@@ -257,7 +266,7 @@ max_instances: 100
 
 ```bash
 # Environment variables
-export AIDR_BASE_URL="https://api.crowdstrike.com/aidr/aiguard"
+export AIDR_CLOUD="us-1"
 export AIDR_TOKEN="dev-token"
 export DEBUG_MODE="true"
 export LOG_LEVEL="debug"
@@ -270,7 +279,7 @@ export LOG_LEVEL="debug"
 gcloud run deploy aidr-shim \
   --region=us-central1 \
   --set-env-vars="LOG_LEVEL=info" \
-  --set-secrets="AIDR_BASE_URL=aidr-base-url:latest,AIDR_TOKEN=aidr-token:latest" \
+  --set-secrets="AIDR_CLOUD=aidr-cloud:latest,AIDR_TOKEN=aidr-token:latest" \
   --cpu=2 \
   --memory=1Gi \
   --min-instances=1 \
@@ -286,7 +295,7 @@ region        = "us-central1"
 service_name  = "aidr-shim"
 
 # Secrets (use TF_VAR_ environment variables for CI/CD)
-aidr_base_url = "https://api.crowdstrike.com/aidr/aiguard"
+aidr_cloud    = "us-1"
 aidr_token    = "prod-token"
 
 # Resources
@@ -313,7 +322,7 @@ The shim validates configuration at startup. Invalid configuration causes the se
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `AIDR_BASE_URL environment variable is required` | Missing URL | Set AIDR_BASE_URL or mount secret |
+| `AIDR_CLOUD environment variable is required` | Missing cloud region | Set AIDR_CLOUD or mount secret |
 | `AIDR_TOKEN environment variable is required` | Missing token | Set AIDR_TOKEN or mount secret |
 | `invalid GRPC_PORT` | Non-numeric port | Use integer value (e.g., "8080") |
 | `invalid HEALTH_PORT` | Non-numeric port | Use integer value (e.g., "8081") |
@@ -322,9 +331,9 @@ The shim validates configuration at startup. Invalid configuration causes the se
 
 On successful startup, the shim logs its configuration (redacting sensitive values):
 
-```
+```text
 INFO: Starting AIDR GCP ext_proc shim
-INFO: AIDR_BASE_URL: https://api.crowdstrike.com/aidr/aiguard
+INFO: AIDR_CLOUD: us-1
 INFO: GRPC_PORT: 8080
 INFO: HEALTH_PORT: 8081
 INFO: LOG_LEVEL: info

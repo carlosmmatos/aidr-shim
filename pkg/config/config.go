@@ -5,16 +5,16 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config holds the configuration for the AIDR GCP shim.
 type Config struct {
-	// AIRDBaseURL is the base URL for the AIDR API.
-	// Example: https://api.crowdstrike.com/aidr/aiguard
-	AIRDBaseURL string
+	// AIDRCloud is the CrowdStrike Falcon AIDR cloud region (e.g. us-1, us-2, eu-1).
+	AIDRCloud string
 
-	// AIRDToken is the bearer token for AIDR authentication.
-	AIRDToken string
+	// AIDRToken is the bearer token for AIDR authentication.
+	AIDRToken string
 
 	// GRPCPort is the port for the gRPC server.
 	GRPCPort int
@@ -44,13 +44,18 @@ func Load() (*Config, error) {
 	}
 
 	// Required configuration
-	cfg.AIRDBaseURL = os.Getenv("AIDR_BASE_URL")
-	if cfg.AIRDBaseURL == "" {
-		return nil, fmt.Errorf("AIDR_BASE_URL environment variable is required")
+	cloudStr := os.Getenv("AIDR_CLOUD")
+	if cloudStr == "" {
+		return nil, fmt.Errorf("AIDR_CLOUD environment variable is required")
 	}
+	cloudURL, err := parseCloud(cloudStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid AIDR_CLOUD: %w", err)
+	}
+	cfg.AIDRCloud = cloudURL
 
-	cfg.AIRDToken = os.Getenv("AIDR_TOKEN")
-	if cfg.AIRDToken == "" {
+	cfg.AIDRToken = os.Getenv("AIDR_TOKEN")
+	if cfg.AIDRToken == "" {
 		return nil, fmt.Errorf("AIDR_TOKEN environment variable is required")
 	}
 
@@ -81,4 +86,26 @@ func Load() (*Config, error) {
 	cfg.EchoMode = os.Getenv("ECHO_MODE") == "true"
 
 	return cfg, nil
+}
+
+// parseCloud normalizes and validates a cloud region string.
+// It accepts formats like "us-1", "Us-1", "US1", " us-1 ", etc.
+func parseCloud(s string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(s))
+	stripped := strings.ReplaceAll(normalized, "-", "")
+
+	switch stripped {
+	case "us1":
+		return "https://api.crowdstrike.com/aidr/aiguard", nil
+	case "us2":
+		return "https://api.us-2.crowdstrike.com/aidr/aiguard", nil
+	case "eu1":
+		return "https://api.eu-1.crowdstrike.com/aidr/aiguard", nil
+	case "usgov1":
+		return "https://api.laggar.gcw.crowdstrike.com/aidr/aiguard", nil
+	case "usgov2":
+		return "https://api.us-gov-2.crowdstrike.mil/aidr/aiguard", nil
+	}
+
+	return "", fmt.Errorf("unrecognized falcon cloud region: %q", s)
 }

@@ -25,13 +25,26 @@ echo "Region: $REGION"
 echo "Service: $SERVICE_NAME"
 echo ""
 
+# Ensure Cloud Run service account can access secrets
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
+echo "Granting Secret Manager access to ${SA}..."
+for secret in aidr-cloud aidr-token; do
+    gcloud secrets add-iam-policy-binding "$secret" \
+        --project="$PROJECT_ID" \
+        --member="serviceAccount:${SA}" \
+        --role="roles/secretmanager.secretAccessor" \
+        --quiet
+done
+
 # Deploy to Cloud Run
 gcloud run deploy "$SERVICE_NAME" \
     --project="$PROJECT_ID" \
     --source . \
     --region="$REGION" \
     --set-env-vars="DEBUG_MODE=true,LOG_LEVEL=debug" \
-    --set-secrets="AIDR_BASE_URL=aidr-base-url:latest,AIDR_TOKEN=aidr-token:latest" \
+    --set-secrets="AIDR_CLOUD=aidr-cloud:latest,AIDR_TOKEN=aidr-token:latest" \
     --allow-unauthenticated \
     --port=8080 \
     --cpu=1 \
@@ -52,7 +65,7 @@ SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
 echo "Service URL: $SERVICE_URL"
 echo ""
 echo "To view logs:"
-echo "  gcloud run services logs tail $SERVICE_NAME --region=$REGION --project=$PROJECT_ID"
+echo "  gcloud run services logs read $SERVICE_NAME --region=$REGION --project=$PROJECT_ID --limit=50"
 echo ""
 echo "To test with test client:"
-echo "  go run ./cmd/testclient --address=${SERVICE_URL#https://}:443 --tls --payload=test/testdata/clean_request.json"
+echo "  go run ./test/client --address=${SERVICE_URL#https://}:443 --tls --payload=test/testdata/clean_request.json"

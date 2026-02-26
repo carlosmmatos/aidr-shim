@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"google.golang.org/grpc"
@@ -73,18 +74,18 @@ func main() {
 	// Initialize AIDR client
 	// The base URL template supports {SERVICE_NAME} placeholder
 	aidrClient := aidr.NewClient(
-		option.WithBaseURLTemplate(cfg.AIRDBaseURL),
-		option.WithToken(cfg.AIRDToken),
+		option.WithBaseURLTemplate(cfg.AIDRCloud),
+		option.WithToken(cfg.AIDRToken),
 	)
 
 	// Create callout service
-	calloutService := server.NewCalloutService(
-		server.NewAIRDClientWrapper(&aidrClient),
-		cfg.CollectorInstanceID,
-		logger,
-		cfg.DebugMode,
-		cfg.EchoMode,
-	)
+	calloutService := server.NewCalloutService(server.CalloutServiceParams{
+		AIDRClient:          server.NewAIDRClientWrapper(&aidrClient),
+		CollectorInstanceID: cfg.CollectorInstanceID,
+		Logger:              logger,
+		DebugMode:           cfg.DebugMode,
+		EchoMode:            cfg.EchoMode,
+	})
 
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
@@ -109,16 +110,23 @@ func main() {
 	healthMux := http.NewServeMux()
 	healthMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		if _, err := w.Write([]byte("OK")); err != nil {
+			logger.Debug("failed to write health response", "error", err)
+		}
 	})
 	healthMux.HandleFunc("/ready", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		if _, err := w.Write([]byte("OK")); err != nil {
+			logger.Debug("failed to write ready response", "error", err)
+		}
 	})
 
 	healthHTTPServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.HealthPort),
-		Handler: healthMux,
+		Addr:         fmt.Sprintf(":%d", cfg.HealthPort),
+		Handler:      healthMux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	// Start servers
@@ -152,6 +160,12 @@ func main() {
 	// Graceful shutdown
 	logger.Info("shutting down servers")
 	grpcServer.GracefulStop()
-	healthHTTPServer.Shutdown(context.Background())
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	if err := healthHTTPServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error("error during health server shutdown", "error", err)
+	}
 	logger.Info("shutdown complete")
 }

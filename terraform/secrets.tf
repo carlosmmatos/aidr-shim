@@ -1,7 +1,7 @@
 # Secret Manager secrets for AIDR credentials
 
-resource "google_secret_manager_secret" "aidr_base_url" {
-  secret_id = "aidr-base-url"
+resource "google_secret_manager_secret" "aidr_cloud" {
+  secret_id = "aidr-cloud"
   project   = var.project_id
 
   replication {
@@ -13,9 +13,9 @@ resource "google_secret_manager_secret" "aidr_base_url" {
   }
 }
 
-resource "google_secret_manager_secret_version" "aidr_base_url" {
-  secret      = google_secret_manager_secret.aidr_base_url.id
-  secret_data = var.aidr_base_url
+resource "google_secret_manager_secret_version" "aidr_cloud" {
+  secret      = google_secret_manager_secret.aidr_cloud.id
+  secret_data = var.aidr_cloud
 }
 
 resource "google_secret_manager_secret" "aidr_token" {
@@ -36,19 +36,21 @@ resource "google_secret_manager_secret_version" "aidr_token" {
   secret_data = var.aidr_token
 }
 
-# IAM binding for Cloud Run service account to access secrets
-resource "google_secret_manager_secret_iam_member" "aidr_base_url_access" {
-  secret_id = google_secret_manager_secret.aidr_base_url.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_cloud_run_v2_service.aidr_shim.template[0].service_account}"
+# Look up project number to construct the default compute service account
+data "google_project" "current" {
+  project_id = var.project_id
+}
 
-  depends_on = [google_cloud_run_v2_service.aidr_shim]
+# IAM binding for Cloud Run service account to access secrets
+# Must be created BEFORE the Cloud Run service so it can read secrets on startup
+resource "google_secret_manager_secret_iam_member" "aidr_cloud_access" {
+  secret_id = google_secret_manager_secret.aidr_cloud.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
 resource "google_secret_manager_secret_iam_member" "aidr_token_access" {
   secret_id = google_secret_manager_secret.aidr_token.id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_cloud_run_v2_service.aidr_shim.template[0].service_account}"
-
-  depends_on = [google_cloud_run_v2_service.aidr_shim]
+  member    = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
