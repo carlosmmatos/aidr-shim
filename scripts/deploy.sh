@@ -217,6 +217,21 @@ main() {
     create_or_update_secret "$PROJECT_ID" "aidr-token" "$AIDR_TOKEN"
     success "Secrets configured"
 
+    # Step 6b: Grant Cloud Run service account access to secrets
+    info "Granting Secret Manager access to Cloud Run service account..."
+    local project_number
+    project_number=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+    local sa="${project_number}-compute@developer.gserviceaccount.com"
+
+    for secret in aidr-cloud aidr-token; do
+        gcloud secrets add-iam-policy-binding "$secret" \
+            --project="$PROJECT_ID" \
+            --member="serviceAccount:${sa}" \
+            --role="roles/secretmanager.secretAccessor" \
+            --quiet
+    done
+    success "Secret Manager access granted to ${sa}"
+
     # Step 7: Deploy to Cloud Run
     echo ""
     info "Deploying to Cloud Run..."
@@ -257,7 +272,7 @@ main() {
     echo ""
     echo "Service URL (provide this to Google for Load Balancer configuration):"
     echo ""
-    echo "  ${GREEN}${SERVICE_URL}${NC}"
+    echo -e "  ${GREEN}${SERVICE_URL}${NC}"
     echo ""
     echo "Next steps:"
     echo "  1. Provide the service URL to Google for Load Balancer ext_proc configuration"
@@ -265,7 +280,7 @@ main() {
     echo ""
     echo "Useful commands:"
     echo "  View logs:"
-    echo "    gcloud run services logs tail $SERVICE_NAME --region=$REGION --project=$PROJECT_ID"
+    echo "    gcloud run services logs read $SERVICE_NAME --region=$REGION --project=$PROJECT_ID --limit=50"
     echo ""
     echo "  Test the deployment:"
     echo "    go run ./test/client --address=${SERVICE_URL#https://}:443 --tls --payload=test/testdata/clean_request.json"

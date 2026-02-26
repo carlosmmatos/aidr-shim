@@ -305,6 +305,7 @@ func createConnection() (*grpc.ClientConn, error) {
 	if *useTLS {
 		tlsConfig := &tls.Config{
 			MinVersion: tls.VersionTLS12,
+			NextProtos: []string{"h2"},
 		}
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	} else {
