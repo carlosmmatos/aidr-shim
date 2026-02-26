@@ -13,14 +13,14 @@ This Terraform module deploys the AIDR GCP ext_proc shim to Google Cloud Run wit
 
 ## Building the Container Image
 
-Before running Terraform, you need to build and push the container image:
+Before running Terraform, you need to build and push the container image. Run these commands **from the repository root** (not the `terraform/` directory):
 
 ```bash
-# Option 1: Build and push using Cloud Build
-gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/aidr-shim:latest ..
+# Option 1: Build and push using Cloud Build (recommended)
+gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/aidr-shim:latest .
 
 # Option 2: Build locally and push
-docker build -t gcr.io/YOUR_PROJECT_ID/aidr-shim:latest ..
+docker build -t gcr.io/YOUR_PROJECT_ID/aidr-shim:latest .
 docker push gcr.io/YOUR_PROJECT_ID/aidr-shim:latest
 ```
 
@@ -102,7 +102,7 @@ collector_instance_id = "prod-us-central1"
 | `service_name` | No | `aidr-shim` | Cloud Run service name |
 | `aidr_cloud` | Yes | - | Falcon cloud region (e.g. us-1) |
 | `aidr_token` | Yes | - | AIDR bearer token |
-| `container_image` | Yes | - | Container image to deploy |
+| `container_image` | Yes | - | Container image to deploy (must be built and pushed first) |
 | `min_instances` | No | `0` | Minimum instances |
 | `max_instances` | No | `10` | Maximum instances |
 | `cpu` | No | `1` | CPU allocation |
@@ -153,6 +153,16 @@ terraform destroy
 
 ## Troubleshooting
 
+### "Insufficient authentication scopes" errors
+
+If running from a GCE instance, the default service account may not have the required OAuth scopes. Run:
+
+```bash
+gcloud auth application-default login
+```
+
+This creates user credentials with full `cloud-platform` scope that Terraform will use automatically.
+
 ### "Permission denied" errors
 
 Ensure your account has these roles:
@@ -164,6 +174,14 @@ Ensure your account has these roles:
 ### "API not enabled" errors
 
 The module automatically enables required APIs, but this may take a moment. Re-run `terraform apply` if you see API enablement errors.
+
+### "Dockerfile required" when building image
+
+The `gcloud builds submit` command must be run from the **repository root** where the `Dockerfile` is located, not from the `terraform/` directory.
+
+### "Image not found" errors
+
+The container image must be built and pushed before running `terraform apply`. See [Building the Container Image](#building-the-container-image) above.
 
 ### Secret access errors
 

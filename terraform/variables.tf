@@ -69,7 +69,6 @@ variable "collector_instance_id" {
 }
 
 variable "container_image" {
-  description = "Container image to deploy. If empty, builds from source using Cloud Build."
+  description = "Container image to deploy (e.g., gcr.io/PROJECT/aidr-shim:latest). Must be built and pushed before applying."
   type        = string
-  default     = ""
 }

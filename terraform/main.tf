@@ -29,9 +29,7 @@ resource "google_cloud_run_v2_service" "aidr_shim" {
     }
 
     containers {
-      # If container_image is provided, use it; otherwise, this will fail
-      # and you need to build/push the image first or use gcloud run deploy --source
-      image = var.container_image != "" ? var.container_image : "gcr.io/${var.project_id}/${var.service_name}:latest"
+      image = var.container_image
 
       resources {
         limits = {
