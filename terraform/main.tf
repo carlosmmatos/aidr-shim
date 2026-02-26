@@ -19,8 +19,12 @@ resource "google_cloud_run_v2_service" "aidr_shim" {
   location = var.region
   project  = var.project_id
 
-  # Ensure APIs are enabled first
-  depends_on = [google_project_service.required_apis]
+  # Ensure APIs are enabled and secret IAM bindings exist first
+  depends_on = [
+    google_project_service.required_apis,
+    google_secret_manager_secret_iam_member.aidr_cloud_access,
+    google_secret_manager_secret_iam_member.aidr_token_access,
+  ]
 
   template {
     scaling {

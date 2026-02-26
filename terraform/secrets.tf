@@ -36,19 +36,21 @@ resource "google_secret_manager_secret_version" "aidr_token" {
   secret_data = var.aidr_token
 }
 
+# Look up project number to construct the default compute service account
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
 # IAM binding for Cloud Run service account to access secrets
+# Must be created BEFORE the Cloud Run service so it can read secrets on startup
 resource "google_secret_manager_secret_iam_member" "aidr_cloud_access" {
   secret_id = google_secret_manager_secret.aidr_cloud.id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_cloud_run_v2_service.aidr_shim.template[0].service_account}"
-
-  depends_on = [google_cloud_run_v2_service.aidr_shim]
+  member    = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
 
 resource "google_secret_manager_secret_iam_member" "aidr_token_access" {
   secret_id = google_secret_manager_secret.aidr_token.id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_cloud_run_v2_service.aidr_shim.template[0].service_account}"
-
-  depends_on = [google_cloud_run_v2_service.aidr_shim]
+  member    = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
 }
