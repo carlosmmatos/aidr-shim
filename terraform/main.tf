@@ -84,6 +84,8 @@ resource "google_cloud_run_v2_service" "aidr_shim" {
     }
   }
 
+  deletion_protection = false
+
   # Allow unauthenticated access (the service will be behind Google's LB)
   ingress = "INGRESS_TRAFFIC_ALL"
 
