@@ -39,6 +39,7 @@ The CrowdStrike Falcon cloud region. The shim derives the full AIDR API base URL
 **Valid values**: `us-1`, `us-2`, `eu-1`, `us-gov-1`, `us-gov-2`
 
 **Example**:
+
 ```bash
 AIDR_CLOUD="us-1"
 ```
@@ -54,6 +55,7 @@ The bearer token for authenticating with the AIDR API. Generate this in the Crow
 **Security**: Never commit this value to version control. Always use Secret Manager in production.
 
 **Example**:
+
 ```bash
 AIDR_TOKEN="your-bearer-token-here"
 ```
@@ -75,7 +77,9 @@ The port on which the gRPC ext_proc server listens. Cloud Run routes traffic to 
 **Default**: `8081`
 
 The port for the HTTP health check server. This exposes:
+
 - `GET /health` - Returns `{"status": "healthy"}` when ready
+- `GET /ready` - Returns `{"status": "ready"}` when the service is ready to accept traffic
 
 **Note**: Cloud Run uses TCP health checks by default, but you can configure HTTP health checks to use this endpoint.
 
@@ -96,6 +100,7 @@ Controls the verbosity of log output.
 | `error` | Errors only | Minimal logging |
 
 **Example**:
+
 ```bash
 LOG_LEVEL="debug"  # For troubleshooting
 LOG_LEVEL="warn"   # For high-volume production
@@ -113,6 +118,7 @@ Enables verbose debug logging including full request and response bodies.
 **Warning**: This may log sensitive data (PII, prompts, API responses). Use only for troubleshooting and disable in production.
 
 **Example**:
+
 ```bash
 DEBUG_MODE="true"  # Temporary troubleshooting
 DEBUG_MODE="false" # Normal operation
@@ -126,6 +132,7 @@ DEBUG_MODE="false" # Normal operation
 **Values**: `true`, `false`
 
 When enabled, the shim bypasses the AIDR API entirely and:
+
 - Logs all request/response payloads
 - Always returns "allow" decisions
 
@@ -142,11 +149,13 @@ When enabled, the shim bypasses the AIDR API entirely and:
 An optional identifier for this shim instance. Included in logs and AIDR API calls for correlation.
 
 **Use cases**:
+
 - Identifying traffic sources in multi-region deployments
 - Correlating logs with specific Cloud Run revisions
 - Debugging multi-instance scenarios
 
 **Example**:
+
 ```bash
 COLLECTOR_INSTANCE_ID="prod-us-central1-v2"
 ```
@@ -194,7 +203,7 @@ Recommended resource configurations based on traffic volume:
 
 ### Development/Testing
 
-```
+```yaml
 cpu: 1
 memory: 256Mi
 min_instances: 0
@@ -203,7 +212,7 @@ max_instances: 2
 
 ### Low-Volume Production
 
-```
+```yaml
 cpu: 1
 memory: 512Mi
 min_instances: 0
@@ -212,7 +221,7 @@ max_instances: 10
 
 ### Medium-Volume Production
 
-```
+```yaml
 cpu: 1
 memory: 512Mi
 min_instances: 1      # Keep warm
@@ -221,7 +230,7 @@ max_instances: 50
 
 ### High-Volume Production
 
-```
+```yaml
 cpu: 2
 memory: 1Gi
 min_instances: 2      # Redundancy
@@ -322,7 +331,7 @@ The shim validates configuration at startup. Invalid configuration causes the se
 
 On successful startup, the shim logs its configuration (redacting sensitive values):
 
-```
+```text
 INFO: Starting AIDR GCP ext_proc shim
 INFO: AIDR_CLOUD: us-1
 INFO: GRPC_PORT: 8080

@@ -100,7 +100,7 @@ collector_instance_id = "prod-us-central1"
 | `project_id` | Yes | - | GCP project ID |
 | `region` | No | `us-central1` | Cloud Run region |
 | `service_name` | No | `aidr-shim` | Cloud Run service name |
-| `aidr_cloud` | Yes | - | Falcon cloud region (e.g. us-1) |
+| `aidr_cloud` | Yes | - | Falcon cloud region (us-1, us-2, eu-1, us-gov-1, us-gov-2) |
 | `aidr_token` | Yes | - | AIDR bearer token |
 | `container_image` | Yes | - | Container image to deploy (must be built and pushed first) |
 | `min_instances` | No | `0` | Minimum instances |
@@ -166,6 +166,7 @@ This creates user credentials with full `cloud-platform` scope that Terraform wi
 ### "Permission denied" errors
 
 Ensure your account has these roles:
+
 - `roles/run.admin`
 - `roles/secretmanager.admin`
 - `roles/cloudbuild.builds.editor`

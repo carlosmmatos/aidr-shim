@@ -38,32 +38,30 @@ The AIDR GCP ext_proc shim is a gRPC service that integrates CrowdStrike's AI De
 
 ## Architecture
 
-```
-                    ┌─────────────────────────────────────────────────────┐
-                    │                  Google Cloud                        │
-                    │                                                      │
-   User Request     │    ┌─────────────┐      ┌──────────────────┐        │
-──────────────────▶│───▶│   Cloud     │─────▶│   Your AI        │        │
-                    │    │   Load      │      │   Application    │        │
-◀──────────────────│◀───│   Balancer  │◀─────│   (Cloud Run,    │        │
-   AI Response      │    │   (ext_proc)│      │    GKE, etc.)    │        │
-                    │    └──────┬──────┘      └──────────────────┘        │
-                    │           │                                          │
-                    │           │ gRPC                                     │
-                    │           ▼                                          │
-                    │    ┌─────────────┐      ┌──────────────────┐        │
-                    │    │   AIDR      │─────▶│   CrowdStrike    │        │
-                    │    │   ext_proc  │      │   AIDR API       │        │
-                    │    │   Shim      │◀─────│                  │        │
-                    │    │   (Cloud    │      │                  │        │
-                    │    │    Run)     │      └──────────────────┘        │
-                    │    └─────────────┘              │                   │
-                    │                                 │                   │
-                    └─────────────────────────────────│───────────────────┘
-                                                      │
-                                                      ▼
-                                              CrowdStrike Cloud
-                                              (Policy Engine)
+```mermaid
+flowchart LR
+    User([User])
+
+    subgraph GCP["Google Cloud"]
+        LB["Cloud Load Balancer\n(ext_proc)"]
+        App["Your AI Application\n(Cloud Run, GKE, etc.)"]
+        Shim["AIDR ext_proc Shim\n(Cloud Run)"]
+    end
+
+    subgraph CS["CrowdStrike Cloud"]
+        AIDR["AIDR API"]
+        Policy["Policy Engine"]
+    end
+
+    User -->|"① Request"| LB
+    LB -->|"⑥ Forward"| App
+    App -->|"Response"| LB
+    LB -->|"Response"| User
+    LB -->|"② ext_proc gRPC"| Shim
+    Shim -->|"③ Analyze payload"| AIDR
+    AIDR --- Policy
+    AIDR -->|"④ Verdict"| Shim
+    Shim -->|"⑤ Allow / Block / Transform"| LB
 ```
 
 ### Flow
@@ -90,6 +88,7 @@ Before deploying, ensure you have:
 ### 2. CrowdStrike AIDR Credentials
 
 From your CrowdStrike Falcon console:
+
 - **AIDR Cloud Region**: Your Falcon cloud region (e.g. `us-1`, `us-2`, `eu-1`)
 - **Bearer Token**: API authentication token
 
@@ -98,6 +97,7 @@ Contact your CrowdStrike representative if you need help obtaining these.
 ### 3. Tools (for local deployment)
 
 If deploying from your local machine (not Cloud Shell):
+
 - [gcloud CLI](https://cloud.google.com/sdk/docs/install) installed and configured
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.0 (for Terraform deployments)
 
@@ -118,7 +118,7 @@ Go to [Google Cloud Console](https://console.cloud.google.com) and click the Clo
 ```bash
 # If you have the code in a git repository
 git clone <your-repo-url>
-cd gcp-shim
+cd aidr-shim
 
 # Or upload via Cloud Shell's upload feature
 ```
@@ -130,6 +130,7 @@ cd gcp-shim
 ```
 
 This script will:
+
 - Verify gcloud authentication
 - Check and enable required APIs
 - Validate IAM permissions
@@ -141,6 +142,7 @@ This script will:
 ```
 
 The interactive script will prompt for:
+
 - **GCP Project ID**: Your project (auto-detected if configured)
 - **Region**: Where to deploy (default: us-central1)
 - **Service name**: Cloud Run service name (default: aidr-shim)
@@ -151,7 +153,7 @@ The interactive script will prompt for:
 
 After deployment, the script outputs your service URL:
 
-```
+```text
 Service URL (provide this to Google for Load Balancer configuration):
 
   https://aidr-shim-xxxxx-uc.a.run.app
@@ -183,7 +185,7 @@ For repeatable, auditable deployments, use Terraform.
 
 ```bash
 # From the project root directory
-gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/aidr-shim:latest
+gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/aidr-shim:latest .
 ```
 
 ### Step 2: Configure Variables
@@ -297,11 +299,21 @@ go build -o testclient ./test/client
 | `prompt_injection.json` | BLOCKED | Malicious prompt |
 | `response_with_pii.json` | TRANSFORMED | Response containing PII |
 
+### Cloud Run Smoke Tests
+
+Use the provided script to verify a deployed Cloud Run service:
+
+```bash
+./scripts/test-cloud-run.sh
+```
+
+This tests the health and ready endpoints of your deployed service.
+
 ### Verifying Results
 
 Expected output for a successful test:
 
-```
+```text
 [ALLOWED] clean_request.json
   Payload passed through unchanged
 
@@ -320,12 +332,13 @@ Total: 4 | Allowed: 1 | Blocked: 2 | Transformed: 1 | Errors: 0
 ### Viewing Logs
 
 ```bash
-# Stream logs in real-time
-gcloud run services logs tail aidr-shim \
-  --region=us-central1 \
-  --project=YOUR_PROJECT_ID
-
 # View recent logs
+gcloud run services logs read aidr-shim \
+  --region=us-central1 \
+  --project=YOUR_PROJECT_ID \
+  --limit=50
+
+# View more logs with higher limit
 gcloud run services logs read aidr-shim \
   --region=us-central1 \
   --project=YOUR_PROJECT_ID \
@@ -335,6 +348,7 @@ gcloud run services logs read aidr-shim \
 ### Log Levels
 
 Set `LOG_LEVEL` to control verbosity:
+
 - `debug`: All messages including request/response details
 - `info`: Normal operations (default)
 - `warn`: Warnings and errors
@@ -351,6 +365,7 @@ Enable `DEBUG_MODE=true` to log full request/response bodies. **Warning**: This 
 **Cause**: Secret Manager secrets not accessible.
 
 **Solution**: Verify secrets exist and have correct IAM bindings:
+
 ```bash
 gcloud secrets list --project=YOUR_PROJECT_ID
 gcloud secrets describe aidr-cloud --project=YOUR_PROJECT_ID
@@ -361,6 +376,7 @@ gcloud secrets describe aidr-cloud --project=YOUR_PROJECT_ID
 **Cause**: Network issues or incorrect URL.
 
 **Solution**:
+
 1. Verify `AIDR_CLOUD` is a valid cloud region (us-1, us-2, eu-1, us-gov-1, us-gov-2)
 2. Check Cloud Run has outbound internet access
 3. Verify AIDR service is operational
@@ -370,6 +386,7 @@ gcloud secrets describe aidr-cloud --project=YOUR_PROJECT_ID
 **Cause**: Invalid or expired bearer token.
 
 **Solution**: Regenerate token in CrowdStrike console and update the secret:
+
 ```bash
 echo -n "new-token" | gcloud secrets versions add aidr-token --data-file=-
 ```
@@ -379,6 +396,7 @@ echo -n "new-token" | gcloud secrets versions add aidr-token --data-file=-
 **Cause**: Load balancer configuration issues.
 
 **Solution**: Verify:
+
 1. Cloud Run service is using HTTP/2 (`--use-http2`)
 2. Load balancer ext_proc is configured with gRPC
 3. Service URL is correct
@@ -401,7 +419,9 @@ After deployment:
 
 ### 1. Configure Google Load Balancer
 
-Provide the service URL to Google to configure the ext_proc extension on your Load Balancer. This is typically done through:
+Provide the service URL to Google to configure the ext_proc extension on your Load Balancer.
+This is typically done through:
+
 - Google Cloud Console (Network Services → Load Balancing)
 - Terraform/Infrastructure as Code
 - Working with Google Cloud support
@@ -409,6 +429,7 @@ Provide the service URL to Google to configure the ext_proc extension on your Lo
 ### 2. Configure AIDR Policies
 
 In the CrowdStrike Falcon console:
+
 1. Navigate to **AIDR** → **Policies**
 2. Configure detection rules for:
    - Prompt injection attacks
@@ -424,10 +445,23 @@ In the CrowdStrike Falcon console:
 ### 4. Production Hardening
 
 Consider:
+
 - VPC connector for private networking
 - Cloud Armor for additional DDoS protection
 - Custom domain with managed SSL
 - Alerting on error rates
+
+---
+
+## Cleanup
+
+To remove all deployed resources:
+
+```bash
+./scripts/cleanup.sh
+```
+
+This script removes the Cloud Run service, Secret Manager secrets, and container images created by the deployment.
 
 ---
 

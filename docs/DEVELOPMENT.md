@@ -18,6 +18,20 @@ make test
 make lint
 ```
 
+## Makefile Targets
+
+| Target | Description |
+|--------|-------------|
+| `make help` | Display all available targets |
+| `make build` | Build the shim binary |
+| `make run` | Run the shim locally |
+| `make test` | Run tests with coverage |
+| `make lint` | Run golangci-lint |
+| `make lint-fix` | Run golangci-lint with auto-fix |
+| `make fmt` | Run go fmt |
+| `make vet` | Run go vet |
+| `make clean` | Remove build artifacts |
+
 ## Running the Shim Locally
 
 ### Echo Mode (no AIDR credentials needed)
@@ -109,6 +123,32 @@ curl http://localhost:8081/ready
 | `DEBUG_MODE` | No | `false` | Verbose AIDR request/response logging |
 | `ECHO_MODE` | No | `false` | Bypass AIDR API, allow all requests |
 | `COLLECTOR_INSTANCE_ID` | No | | Optional instance identifier |
+
+## Deployment Scripts
+
+### Debug Deployment
+
+Deploy with debug logging enabled:
+
+```bash
+./scripts/deploy-debug.sh
+```
+
+### Cloud Run Smoke Tests
+
+After deploying, verify the service is healthy:
+
+```bash
+./scripts/test-cloud-run.sh
+```
+
+### Cleanup
+
+Remove all deployed resources (Cloud Run service, secrets, container images):
+
+```bash
+./scripts/cleanup.sh
+```
 
 ## Docker
 
