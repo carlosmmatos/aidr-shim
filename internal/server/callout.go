@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -165,6 +166,11 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 		)
 	}
 
+	// Empty bodies (e.g. chunked transfer or 204 responses) can't be scanned.
+	if len(body) == 0 {
+		return s.allowResponse(isRequest), nil
+	}
+
 	// Parse the body as JSON to extract guard_input structure
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -181,8 +187,30 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 	}
 
 	// Build guard_input - the SDK accepts any as guard_input so we pass the parsed payload
-	// which typically contains messages, tools, and other fields per the AI chat format
-	guardInput := s.buildGuardInput(payload)
+	// which typically contains messages, tools, and other fields per the AI chat format.
+	//
+	// MCP protocol (primary):
+	//   - Error responses (jsonrpc + error): allowed through without scanning.
+	//   - Success responses (jsonrpc + result): scannable text extracted from result.
+	//   - Requests (jsonrpc + method): scannable content extracted; unscannable methods
+	//     (initialize, notifications) return nil to skip AIDR entirely.
+	// OpenAI format (legacy fallback):
+	//   - messages/tools extracted directly, or prompt converted to messages.
+	var guardInput map[string]any
+	if isMCPError(payload) {
+		return s.allowResponse(isRequest), nil
+	}
+	if isMCPResponse(payload) {
+		guardInput = s.extractMCPResponseContent(payload)
+		if guardInput == nil {
+			return s.allowResponse(isRequest), nil
+		}
+	} else {
+		guardInput = s.buildGuardInput(payload)
+		if guardInput == nil {
+			return s.allowResponse(isRequest), nil
+		}
+	}
 
 	// Call AIDR
 	params := aidr.AIGuardGuardChatCompletionsParams{
@@ -240,22 +268,27 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 }
 
 // buildGuardInput constructs the guard_input structure from the incoming payload.
-// The AIDR API expects guard_input to contain fields like "messages" and "tools"
-// following the OpenAI Chat Completions format.
+// MCP JSON-RPC requests are the primary protocol: scannable content is extracted
+// into messages format, and unscannable methods (initialize, notifications) return
+// nil to signal that AIDR should be skipped. OpenAI Chat Completions format is
+// supported as a legacy fallback.
 func (s *CalloutService) buildGuardInput(payload map[string]any) map[string]any {
+	// MCP JSON-RPC requests: extract scannable content or signal no-scan needed.
+	if isMCPPayload(payload) {
+		return s.extractMCPContent(payload) // nil means nothing to scan
+	}
+
+	// Legacy: OpenAI Chat Completions format
 	guardInput := make(map[string]any)
 
-	// Strategy 1: Extract messages and tools directly
 	if s.extractMessagesAndTools(payload, guardInput) {
 		return guardInput
 	}
 
-	// Strategy 2: Convert simple prompt to messages format
 	if s.convertPromptToMessages(payload, guardInput) {
 		return guardInput
 	}
 
-	// Strategy 3: Pass entire payload as-is
 	return payload
 }
 
@@ -287,6 +320,262 @@ func (s *CalloutService) convertPromptToMessages(payload, guardInput map[string]
 		{"role": "user", "content": prompt},
 	}
 	return true
+}
+
+// isMCPPayload detects whether the payload is an MCP JSON-RPC message by
+// checking for the presence of "jsonrpc" and "method" fields.
+func isMCPPayload(payload map[string]any) bool {
+	_, hasJSONRPC := payload["jsonrpc"]
+	_, hasMethod := payload["method"]
+	return hasJSONRPC && hasMethod
+}
+
+// isMCPResponse detects whether the payload is an MCP JSON-RPC response
+// (has "jsonrpc" and "result" but no "method").
+func isMCPResponse(payload map[string]any) bool {
+	_, hasJSONRPC := payload["jsonrpc"]
+	_, hasResult := payload["result"]
+	_, hasMethod := payload["method"]
+	return hasJSONRPC && hasResult && !hasMethod
+}
+
+// isMCPError detects whether the payload is an MCP JSON-RPC error response
+// (has "jsonrpc" and "error" but no "method"). These contain protocol-level
+// errors, not user content, so they are allowed through without scanning.
+func isMCPError(payload map[string]any) bool {
+	_, hasJSONRPC := payload["jsonrpc"]
+	_, hasError := payload["error"]
+	_, hasMethod := payload["method"]
+	return hasJSONRPC && hasError && !hasMethod
+}
+
+// extractMCPContent extracts scannable text from MCP JSON-RPC payloads and
+// converts it into the OpenAI messages format that AIDR expects. Returns nil
+// if no scannable content is found.
+func (s *CalloutService) extractMCPContent(payload map[string]any) map[string]any {
+	method, _ := payload["method"].(string)
+	params, _ := payload["params"].(map[string]any)
+
+	s.logger.Debug("detected MCP payload", "method", method)
+
+	switch method {
+	case "tools/call":
+		return s.extractToolsCall(params)
+	case "sampling/createMessage":
+		return s.extractSamplingMessage(params)
+	case "prompts/get":
+		return s.extractPromptsGet(params)
+	case "resources/read":
+		return s.extractResourcesRead(params)
+	default:
+		// initialize, notifications, and other low-priority methods
+		return nil
+	}
+}
+
+// extractMCPResponseContent extracts scannable text from MCP JSON-RPC response
+// payloads. Returns nil if no scannable content is found.
+func (s *CalloutService) extractMCPResponseContent(payload map[string]any) map[string]any {
+	result, ok := payload["result"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	var texts []string
+
+	// Extract from result.content[] (tools/call response, prompts/get response)
+	if content, ok := result["content"].([]any); ok {
+		for _, item := range content {
+			if m, ok := item.(map[string]any); ok {
+				if text, ok := m["text"].(string); ok {
+					texts = append(texts, text)
+				}
+			}
+		}
+	}
+
+	// Extract from result.contents[] (resources/read response)
+	if contents, ok := result["contents"].([]any); ok {
+		for _, item := range contents {
+			if m, ok := item.(map[string]any); ok {
+				if text, ok := m["text"].(string); ok {
+					texts = append(texts, text)
+				}
+			}
+		}
+	}
+
+	// Extract from result.messages[] (sampling response)
+	if messages, ok := result["messages"].([]any); ok {
+		for _, item := range messages {
+			if m, ok := item.(map[string]any); ok {
+				if content, ok := m["content"].(map[string]any); ok {
+					if text, ok := content["text"].(string); ok {
+						texts = append(texts, text)
+					}
+				}
+				if content, ok := m["content"].(string); ok {
+					texts = append(texts, content)
+				}
+			}
+		}
+	}
+
+	if len(texts) == 0 {
+		return nil
+	}
+
+	return map[string]any{
+		"messages": []map[string]any{
+			{"role": "assistant", "content": strings.Join(texts, "\n")},
+		},
+	}
+}
+
+// extractToolsCall extracts arguments from a tools/call request into messages.
+func (s *CalloutService) extractToolsCall(params map[string]any) map[string]any {
+	if params == nil {
+		return nil
+	}
+
+	args, ok := params["arguments"].(map[string]any)
+	if !ok || len(args) == 0 {
+		return nil
+	}
+
+	// Serialize all argument values into a single scannable string
+	var parts []string
+	for _, v := range args {
+		switch val := v.(type) {
+		case string:
+			parts = append(parts, val)
+		default:
+			b, err := json.Marshal(val)
+			if err == nil {
+				parts = append(parts, string(b))
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return nil
+	}
+
+	toolName, _ := params["name"].(string)
+	content := strings.Join(parts, "\n")
+
+	messages := []map[string]any{
+		{"role": "user", "content": content},
+	}
+
+	guardInput := map[string]any{"messages": messages}
+	if toolName != "" {
+		guardInput["tools"] = []map[string]any{
+			{"type": "function", "function": map[string]any{"name": toolName}},
+		}
+	}
+	return guardInput
+}
+
+// extractSamplingMessage extracts messages and system prompt from a
+// sampling/createMessage request.
+func (s *CalloutService) extractSamplingMessage(params map[string]any) map[string]any {
+	if params == nil {
+		return nil
+	}
+
+	guardInput := make(map[string]any)
+	var messages []map[string]any
+
+	// Add systemPrompt as a system message if present
+	if sysPrompt, ok := params["systemPrompt"].(string); ok && sysPrompt != "" {
+		messages = append(messages, map[string]any{
+			"role": "system", "content": sysPrompt,
+		})
+	}
+
+	// Extract messages array - MCP uses {role, content: {type, text}} format
+	if rawMsgs, ok := params["messages"].([]any); ok {
+		for _, raw := range rawMsgs {
+			msg, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			role, _ := msg["role"].(string)
+			if role == "" {
+				role = "user"
+			}
+
+			var text string
+			switch c := msg["content"].(type) {
+			case string:
+				text = c
+			case map[string]any:
+				text, _ = c["text"].(string)
+			}
+
+			if text != "" {
+				messages = append(messages, map[string]any{
+					"role": role, "content": text,
+				})
+			}
+		}
+	}
+
+	if len(messages) == 0 {
+		return nil
+	}
+
+	guardInput["messages"] = messages
+	return guardInput
+}
+
+// extractPromptsGet extracts arguments from a prompts/get request.
+func (s *CalloutService) extractPromptsGet(params map[string]any) map[string]any {
+	if params == nil {
+		return nil
+	}
+
+	args, ok := params["arguments"].(map[string]any)
+	if !ok || len(args) == 0 {
+		return nil
+	}
+
+	var parts []string
+	for _, v := range args {
+		if s, ok := v.(string); ok {
+			parts = append(parts, s)
+		}
+	}
+
+	if len(parts) == 0 {
+		return nil
+	}
+
+	return map[string]any{
+		"messages": []map[string]any{
+			{"role": "user", "content": strings.Join(parts, "\n")},
+		},
+	}
+}
+
+// extractResourcesRead extracts the URI from a resources/read request for
+// path traversal scanning.
+func (s *CalloutService) extractResourcesRead(params map[string]any) map[string]any {
+	if params == nil {
+		return nil
+	}
+
+	uri, ok := params["uri"].(string)
+	if !ok || uri == "" {
+		return nil
+	}
+
+	return map[string]any{
+		"messages": []map[string]any{
+			{"role": "user", "content": uri},
+		},
+	}
 }
 
 func (s *CalloutService) allowResponse(isRequest bool) *extprocv3.ProcessingResponse {
@@ -358,12 +647,26 @@ func (s *CalloutService) transformedResponse(guardOutput any, isRequest bool) (*
 		},
 	}
 
+	// Update Content-Length to match the new body size, otherwise Envoy
+	// forwards the original header which causes upstream errors.
+	headerMutation := &extprocv3.HeaderMutation{
+		SetHeaders: []*corev3.HeaderValueOption{
+			{
+				Header: &corev3.HeaderValue{
+					Key:   "content-length",
+					Value: fmt.Sprintf("%d", len(bodyBytes)),
+				},
+			},
+		},
+	}
+
 	if isRequest {
 		return &extprocv3.ProcessingResponse{
 			Response: &extprocv3.ProcessingResponse_RequestBody{
 				RequestBody: &extprocv3.BodyResponse{
 					Response: &extprocv3.CommonResponse{
-						BodyMutation: bodyMutation,
+						HeaderMutation: headerMutation,
+						BodyMutation:   bodyMutation,
 					},
 				},
 			},
@@ -373,7 +676,8 @@ func (s *CalloutService) transformedResponse(guardOutput any, isRequest bool) (*
 		Response: &extprocv3.ProcessingResponse_ResponseBody{
 			ResponseBody: &extprocv3.BodyResponse{
 				Response: &extprocv3.CommonResponse{
-					BodyMutation: bodyMutation,
+					HeaderMutation: headerMutation,
+					BodyMutation:   bodyMutation,
 				},
 			},
 		},
