@@ -22,6 +22,8 @@ The shim is configured entirely through environment variables. In production, se
 | `LOG_LEVEL` | `info` | Logging verbosity level |
 | `DEBUG_MODE` | `false` | Enable verbose debug logging |
 | `ECHO_MODE` | `false` | Bypass AIDR, log payloads only (testing) |
+| `FAILURE_MODE` | `allow` | Behavior when AIDR is unreachable: `allow` or `deny` |
+| `ALLOW_ECHO_MODE` | `false` | Safety guard: must be `true` to enable `ECHO_MODE` |
 | `COLLECTOR_INSTANCE_ID` | (empty) | Optional identifier for this shim instance |
 
 ---
@@ -78,8 +80,7 @@ The port on which the gRPC ext_proc server listens. Cloud Run routes traffic to 
 
 The port for the HTTP health check server. This exposes:
 
-- `GET /health` - Returns `{"status": "healthy"}` when ready
-- `GET /ready` - Returns `{"status": "ready"}` when the service is ready to accept traffic
+- `GET /health` - Returns `OK` when the service is running
 
 **Note**: Cloud Run uses TCP health checks by default, but you can configure HTTP health checks to use this endpoint.
 
@@ -139,6 +140,38 @@ When enabled, the shim bypasses the AIDR API entirely and:
 **Use case**: Testing the ext_proc integration without AIDR connectivity.
 
 **Warning**: Never enable in production - all requests will be allowed without inspection.
+
+**Safety guard**: `ECHO_MODE=true` requires `ALLOW_ECHO_MODE=true` to be set as well. This prevents accidental activation in production.
+
+### ALLOW_ECHO_MODE
+
+**Required**: No
+**Type**: Boolean
+**Default**: `false`
+**Values**: `true`, `false`
+
+Safety guard for `ECHO_MODE`. Must be explicitly set to `true` before `ECHO_MODE` can be enabled. This is a deliberate two-flag mechanism to prevent accidental bypass of AIDR scanning in production.
+
+### FAILURE_MODE
+
+**Required**: No
+**Type**: String
+**Default**: `allow`
+**Values**: `allow`, `deny`
+
+Controls behavior when the AIDR API is unreachable or returns an error:
+
+| Value | Behavior | Use Case |
+|-------|----------|----------|
+| `allow` | Requests pass through without scanning | Availability-first environments |
+| `deny` | Requests are blocked | Security-first environments |
+
+**Example**:
+
+```bash
+FAILURE_MODE="deny"  # Block traffic when AIDR is down
+FAILURE_MODE="allow" # Allow traffic when AIDR is down (default)
+```
 
 ### COLLECTOR_INSTANCE_ID
 
@@ -323,21 +356,19 @@ The shim validates configuration at startup. Invalid configuration causes the se
 | Error | Cause | Solution |
 |-------|-------|----------|
 | `AIDR_CLOUD environment variable is required` | Missing cloud region | Set AIDR_CLOUD or mount secret |
-| `AIDR_TOKEN environment variable is required` | Missing token | Set AIDR_TOKEN or mount secret |
-| `invalid GRPC_PORT` | Non-numeric port | Use integer value (e.g., "8080") |
-| `invalid HEALTH_PORT` | Non-numeric port | Use integer value (e.g., "8081") |
+| `AIDR_TOKEN environment variable is required` | Missing or whitespace-only token | Set AIDR_TOKEN or mount secret |
+| `invalid GRPC_PORT` | Non-numeric or out-of-range port | Use integer value between 1 and 65535 |
+| `invalid HEALTH_PORT` | Non-numeric or out-of-range port | Use integer value between 1 and 65535 |
+| `invalid LOG_LEVEL` | Unrecognized log level | Use one of: debug, info, warn, error |
+| `invalid FAILURE_MODE` | Unrecognized failure mode | Use `allow` or `deny` |
+| `ECHO_MODE=true requires ALLOW_ECHO_MODE=true` | Echo mode safety guard | Set `ALLOW_ECHO_MODE=true` or disable `ECHO_MODE` |
 
 ### Startup Logging
 
-On successful startup, the shim logs its configuration (redacting sensitive values):
+On successful startup, the shim logs its configuration as structured JSON (via `slog`):
 
-```text
-INFO: Starting AIDR GCP ext_proc shim
-INFO: AIDR_CLOUD: us-1
-INFO: GRPC_PORT: 8080
-INFO: HEALTH_PORT: 8081
-INFO: LOG_LEVEL: info
-INFO: DEBUG_MODE: false
-INFO: gRPC server listening on :8080
-INFO: Health server listening on :8081
+```json
+{"level":"INFO","msg":"starting AIDR ext_proc shim","mode":"normal","debug_mode":false,"echo_mode":false}
+{"level":"INFO","msg":"starting gRPC server","port":8080}
+{"level":"INFO","msg":"starting health HTTP server","port":8081}
 ```

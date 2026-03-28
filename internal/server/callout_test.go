@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -35,6 +36,8 @@ type mockExternalProcessorStream struct {
 	responses []*extprocv3.ProcessingResponse
 	recvIndex int
 	ctx       context.Context
+	sendErr   error // if set, Send() returns this error
+	recvErr   error // if set, returned after all requests are consumed (instead of io.EOF)
 }
 
 func (m *mockExternalProcessorStream) Context() context.Context {
@@ -42,12 +45,18 @@ func (m *mockExternalProcessorStream) Context() context.Context {
 }
 
 func (m *mockExternalProcessorStream) Send(resp *extprocv3.ProcessingResponse) error {
+	if m.sendErr != nil {
+		return m.sendErr
+	}
 	m.responses = append(m.responses, resp)
 	return nil
 }
 
 func (m *mockExternalProcessorStream) Recv() (*extprocv3.ProcessingRequest, error) {
 	if m.recvIndex >= len(m.requests) {
+		if m.recvErr != nil {
+			return nil, m.recvErr
+		}
 		return nil, io.EOF
 	}
 	req := m.requests[m.recvIndex]
@@ -300,6 +309,131 @@ func TestCalloutService_TransformedRequest(t *testing.T) {
 
 	if content != "My SSN is *******7890" {
 		t.Errorf("expected redacted content, got: %s", content)
+	}
+}
+
+func TestCalloutService_TransformedResponse(t *testing.T) {
+	t.Parallel()
+	// Create mock client that transforms the response (redacts PII)
+	guardOutput := map[string]any{
+		"messages": []map[string]any{
+			{"role": "assistant", "content": "Your account balance is $*****"},
+		},
+	}
+
+	mockClient := &mockAIDRClient{
+		response: &aidr.AIGuardGuardChatCompletionsResponse{
+			RequestID:    "test-request-id",
+			RequestTime:  time.Now(),
+			ResponseTime: time.Now(),
+			Status:       "Success",
+			Result: aidr.AIGuardGuardChatCompletionsResponseResult{
+				Blocked:     false,
+				Transformed: true,
+				GuardOutput: guardOutput,
+			},
+		},
+	}
+
+	service := NewCalloutService(CalloutServiceParams{
+		AIDRClient:          mockClient,
+		CollectorInstanceID: "test-instance",
+		Logger:              newTestLogger(),
+	})
+
+	// Create test response body (OpenAI format)
+	responseBody := map[string]any{
+		"choices": []map[string]any{
+			{
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "Your account balance is $12,345",
+				},
+			},
+		},
+	}
+	bodyBytes, _ := json.Marshal(responseBody)
+
+	stream := &mockExternalProcessorStream{
+		ctx: context.Background(),
+		requests: []*extprocv3.ProcessingRequest{
+			{
+				Request: &extprocv3.ProcessingRequest_ResponseBody{
+					ResponseBody: &extprocv3.HttpBody{
+						Body: bodyBytes,
+					},
+				},
+			},
+		},
+	}
+
+	err := service.Process(stream)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(stream.responses) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(stream.responses))
+	}
+
+	resp := stream.responses[0]
+	body, ok := resp.Response.(*extprocv3.ProcessingResponse_ResponseBody)
+	if !ok {
+		t.Fatal("expected ResponseBody response for transformed response")
+	}
+
+	if body.ResponseBody.Response.BodyMutation == nil {
+		t.Fatal("expected body mutation for transformed response")
+	}
+
+	mutatedBody, ok := body.ResponseBody.Response.BodyMutation.Mutation.(*extprocv3.BodyMutation_Body)
+	if !ok {
+		t.Fatal("expected BodyMutation_Body")
+	}
+
+	// Verify the mutated body contains the redacted content
+	var mutatedPayload map[string]any
+	if err := json.Unmarshal(mutatedBody.Body, &mutatedPayload); err != nil {
+		t.Fatalf("failed to unmarshal mutated body: %v", err)
+	}
+
+	messages, ok := mutatedPayload["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		t.Fatal("expected messages in mutated payload")
+	}
+
+	firstMsg, ok := messages[0].(map[string]any)
+	if !ok {
+		t.Fatal("expected message to be a map")
+	}
+
+	content, ok := firstMsg["content"].(string)
+	if !ok {
+		t.Fatal("expected content to be a string")
+	}
+
+	if content != "Your account balance is $*****" {
+		t.Errorf("expected redacted content, got: %s", content)
+	}
+
+	// Verify Content-Length header is updated
+	headerMut := body.ResponseBody.Response.HeaderMutation
+	if headerMut == nil || len(headerMut.SetHeaders) == 0 {
+		t.Fatal("expected Content-Length header mutation")
+	}
+
+	foundCL := false
+	for _, h := range headerMut.SetHeaders {
+		if h.Header.Key == "content-length" {
+			foundCL = true
+			expected := fmt.Sprintf("%d", len(mutatedBody.Body))
+			if h.Header.Value != expected {
+				t.Errorf("expected Content-Length %s, got %s", expected, h.Header.Value)
+			}
+		}
+	}
+	if !foundCL {
+		t.Fatal("content-length header not found in mutation")
 	}
 }
 
@@ -1331,5 +1465,555 @@ func TestCalloutService_MCPNotificationAllowed(t *testing.T) {
 
 	if mockClient.called {
 		t.Error("AIDR should NOT be called for MCP notifications")
+	}
+}
+
+func TestCalloutService_FailClosed(t *testing.T) {
+	t.Parallel()
+	mockClient := &mockAIDRClient{
+		err: context.DeadlineExceeded,
+	}
+
+	service := NewCalloutService(CalloutServiceParams{
+		AIDRClient: mockClient,
+		Logger:     newTestLogger(),
+		FailClosed: true,
+	})
+
+	requestBody := map[string]any{
+		"messages": []map[string]any{
+			{"role": "user", "content": "Hello"},
+		},
+	}
+	bodyBytes, _ := json.Marshal(requestBody)
+
+	stream := &mockExternalProcessorStream{
+		ctx: context.Background(),
+		requests: []*extprocv3.ProcessingRequest{
+			{
+				Request: &extprocv3.ProcessingRequest_RequestBody{
+					RequestBody: &extprocv3.HttpBody{Body: bodyBytes},
+				},
+			},
+		},
+	}
+
+	err := service.Process(stream)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(stream.responses) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(stream.responses))
+	}
+
+	// fail-closed should return ImmediateResponse (403) on AIDR error
+	resp := stream.responses[0]
+	if _, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse); !ok {
+		t.Fatal("expected ImmediateResponse (blocked) for fail-closed on AIDR error")
+	}
+}
+
+// --- Task 4.1: Process() stream edge case tests ---
+
+func TestCalloutService_SendError(t *testing.T) {
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{
+		AIDRClient: &mockAIDRClient{},
+		Logger:     newTestLogger(),
+	})
+
+	stream := &mockExternalProcessorStream{
+		ctx: context.Background(),
+		requests: []*extprocv3.ProcessingRequest{
+			{
+				Request: &extprocv3.ProcessingRequest_RequestHeaders{
+					RequestHeaders: &extprocv3.HttpHeaders{},
+				},
+			},
+		},
+		sendErr: fmt.Errorf("connection reset"),
+	}
+
+	err := service.Process(stream)
+	if err == nil {
+		t.Fatal("expected error when stream.Send fails")
+	}
+	if !strings.Contains(err.Error(), "error sending response") {
+		t.Errorf("expected 'error sending response', got: %v", err)
+	}
+}
+
+func TestCalloutService_RecvGenericError(t *testing.T) {
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{
+		AIDRClient: &mockAIDRClient{},
+		Logger:     newTestLogger(),
+	})
+
+	stream := &mockExternalProcessorStream{
+		ctx:     context.Background(),
+		recvErr: fmt.Errorf("transport closing"),
+	}
+
+	err := service.Process(stream)
+	if err == nil {
+		t.Fatal("expected error on generic Recv failure")
+	}
+	if !strings.Contains(err.Error(), "error receiving request") {
+		t.Errorf("expected 'error receiving request', got: %v", err)
+	}
+}
+
+func TestCalloutService_ContextCanceled(t *testing.T) {
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{
+		AIDRClient: &mockAIDRClient{},
+		Logger:     newTestLogger(),
+	})
+
+	stream := &mockExternalProcessorStream{
+		ctx:     context.Background(),
+		recvErr: context.Canceled,
+	}
+
+	err := service.Process(stream)
+	if err != nil {
+		t.Fatalf("expected nil error for context.Canceled, got: %v", err)
+	}
+}
+
+func TestCalloutService_DefaultRequestType(t *testing.T) {
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{
+		AIDRClient: &mockAIDRClient{},
+		Logger:     newTestLogger(),
+	})
+
+	// Use a nil request type to trigger the default case
+	stream := &mockExternalProcessorStream{
+		ctx: context.Background(),
+		requests: []*extprocv3.ProcessingRequest{
+			{Request: nil},
+		},
+	}
+
+	err := service.Process(stream)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(stream.responses) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(stream.responses))
+	}
+}
+
+// --- Task 4.2: processBody() edge case tests ---
+
+func TestCalloutService_EmptyBody(t *testing.T) {
+	t.Parallel()
+	mockClient := &mockAIDRClient{}
+
+	service := NewCalloutService(CalloutServiceParams{
+		AIDRClient: mockClient,
+		Logger:     newTestLogger(),
+	})
+
+	stream := &mockExternalProcessorStream{
+		ctx: context.Background(),
+		requests: []*extprocv3.ProcessingRequest{
+			{
+				Request: &extprocv3.ProcessingRequest_RequestBody{
+					RequestBody: &extprocv3.HttpBody{Body: []byte{}},
+				},
+			},
+		},
+	}
+
+	err := service.Process(stream)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mockClient.called {
+		t.Error("AIDR should not be called for empty body")
+	}
+
+	if len(stream.responses) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(stream.responses))
+	}
+
+	if _, ok := stream.responses[0].Response.(*extprocv3.ProcessingResponse_RequestBody); !ok {
+		t.Fatal("expected RequestBody (allow) for empty body")
+	}
+}
+
+func TestCalloutService_DebugModeLogging(t *testing.T) {
+	t.Parallel()
+	mockClient := &mockAIDRClient{
+		response: &aidr.AIGuardGuardChatCompletionsResponse{
+			Status: "Success",
+			Result: aidr.AIGuardGuardChatCompletionsResponseResult{
+				Blocked:     false,
+				Transformed: true,
+				GuardOutput: map[string]any{"messages": []any{}},
+			},
+		},
+	}
+
+	service := NewCalloutService(CalloutServiceParams{
+		AIDRClient: mockClient,
+		Logger:     newTestLogger(),
+		DebugMode:  true,
+	})
+
+	requestBody := map[string]any{
+		"messages": []map[string]any{
+			{"role": "user", "content": "Hello"},
+		},
+	}
+	bodyBytes, _ := json.Marshal(requestBody)
+
+	stream := &mockExternalProcessorStream{
+		ctx: context.Background(),
+		requests: []*extprocv3.ProcessingRequest{
+			{
+				Request: &extprocv3.ProcessingRequest_RequestBody{
+					RequestBody: &extprocv3.HttpBody{Body: bodyBytes},
+				},
+			},
+		},
+	}
+
+	err := service.Process(stream)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the request went through all debug branches without crashing
+	if len(stream.responses) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(stream.responses))
+	}
+}
+
+func TestCalloutService_TransformedNilGuardOutput(t *testing.T) {
+	t.Parallel()
+	mockClient := &mockAIDRClient{
+		response: &aidr.AIGuardGuardChatCompletionsResponse{
+			Status: "Success",
+			Result: aidr.AIGuardGuardChatCompletionsResponseResult{
+				Blocked:     false,
+				Transformed: true,
+				GuardOutput: nil, // contradictory: transformed=true but no output
+			},
+		},
+	}
+
+	service := NewCalloutService(CalloutServiceParams{
+		AIDRClient: mockClient,
+		Logger:     newTestLogger(),
+	})
+
+	requestBody := map[string]any{
+		"messages": []map[string]any{
+			{"role": "user", "content": "Hello"},
+		},
+	}
+	bodyBytes, _ := json.Marshal(requestBody)
+
+	stream := &mockExternalProcessorStream{
+		ctx: context.Background(),
+		requests: []*extprocv3.ProcessingRequest{
+			{
+				Request: &extprocv3.ProcessingRequest_RequestBody{
+					RequestBody: &extprocv3.HttpBody{Body: bodyBytes},
+				},
+			},
+		},
+	}
+
+	err := service.Process(stream)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(stream.responses) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(stream.responses))
+	}
+
+	// Should fall through to allow (Transformed=true but GuardOutput=nil)
+	if _, ok := stream.responses[0].Response.(*extprocv3.ProcessingResponse_RequestBody); !ok {
+		t.Fatal("expected RequestBody (allow) when Transformed=true but GuardOutput=nil")
+	}
+}
+
+// --- Task 4.3: MCP extraction edge case tests ---
+
+func TestExtractToolsCall_NilParams(t *testing.T) {
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{Logger: newTestLogger()})
+
+	result := service.extractToolsCall(nil)
+	if result != nil {
+		t.Errorf("expected nil for nil params, got %v", result)
+	}
+}
+
+func TestExtractToolsCall_EmptyArguments(t *testing.T) {
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{Logger: newTestLogger()})
+
+	result := service.extractToolsCall(map[string]any{
+		"name":      "test_tool",
+		"arguments": map[string]any{},
+	})
+	if result != nil {
+		t.Errorf("expected nil for empty arguments, got %v", result)
+	}
+}
+
+func TestExtractSamplingMessage_PlainStringContent(t *testing.T) {
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{Logger: newTestLogger()})
+
+	result := service.extractSamplingMessage(map[string]any{
+		"messages": []any{
+			map[string]any{
+				"role":    "user",
+				"content": "plain string content",
+			},
+		},
+	})
+
+	if result == nil {
+		t.Fatal("expected non-nil result for plain string content")
+	}
+
+	msgJSON, _ := json.Marshal(result["messages"])
+	if !strings.Contains(string(msgJSON), "plain string content") {
+		t.Errorf("expected 'plain string content', got %s", msgJSON)
+	}
+}
+
+func TestExtractResourcesRead_EmptyURI(t *testing.T) {
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{Logger: newTestLogger()})
+
+	tests := []struct {
+		name   string
+		params map[string]any
+	}{
+		{"nil params", nil},
+		{"empty uri", map[string]any{"uri": ""}},
+		{"missing uri", map[string]any{"other": "field"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := service.extractResourcesRead(tt.params)
+			if result != nil {
+				t.Errorf("expected nil, got %v", result)
+			}
+		})
+	}
+}
+
+func TestExtractMCPResponseContent_SamplingResponse(t *testing.T) {
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{Logger: newTestLogger()})
+
+	// Sampling response uses result.messages[] format
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result": map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role":    "assistant",
+					"content": map[string]any{"type": "text", "text": "sampled response text"},
+				},
+			},
+		},
+	}
+
+	result := service.extractMCPResponseContent(payload)
+	if result == nil {
+		t.Fatal("expected non-nil result for sampling response")
+	}
+
+	msgJSON, _ := json.Marshal(result["messages"])
+	if !strings.Contains(string(msgJSON), "sampled response text") {
+		t.Errorf("expected 'sampled response text', got %s", msgJSON)
+	}
+}
+
+func TestExtractMCPResponseContent_PlainStringContent(t *testing.T) {
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{Logger: newTestLogger()})
+
+	// Sampling response with plain string content in messages
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result": map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role":    "assistant",
+					"content": "plain string response",
+				},
+			},
+		},
+	}
+
+	result := service.extractMCPResponseContent(payload)
+	if result == nil {
+		t.Fatal("expected non-nil result for plain string content")
+	}
+
+	msgJSON, _ := json.Marshal(result["messages"])
+	if !strings.Contains(string(msgJSON), "plain string response") {
+		t.Errorf("expected 'plain string response', got %s", msgJSON)
+	}
+}
+
+func TestExtractMCPResponseContent_ArrayContent(t *testing.T) {
+	t.Parallel()
+	service := NewCalloutService(CalloutServiceParams{Logger: newTestLogger()})
+
+	// Sampling response with content as an array of content blocks
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result": map[string]any{
+			"messages": []any{
+				map[string]any{
+					"role": "assistant",
+					"content": []any{
+						map[string]any{"type": "text", "text": "first block"},
+						map[string]any{"type": "text", "text": "second block"},
+					},
+				},
+			},
+		},
+	}
+
+	result := service.extractMCPResponseContent(payload)
+	if result == nil {
+		t.Fatal("expected non-nil result for array content")
+	}
+
+	msgJSON, _ := json.Marshal(result["messages"])
+	got := string(msgJSON)
+	if !strings.Contains(got, "first block") {
+		t.Errorf("expected 'first block' in %s", got)
+	}
+	if !strings.Contains(got, "second block") {
+		t.Errorf("expected 'second block' in %s", got)
+	}
+}
+
+// --- Task 4.4: Multi-message stream test ---
+
+func TestCalloutService_HeadersThenBody(t *testing.T) {
+	t.Parallel()
+
+	mockClient := &mockAIDRClient{
+		response: &aidr.AIGuardGuardChatCompletionsResponse{
+			Status: "Success",
+			Result: aidr.AIGuardGuardChatCompletionsResponseResult{
+				Blocked: true,
+			},
+		},
+	}
+
+	service := NewCalloutService(CalloutServiceParams{
+		AIDRClient: mockClient,
+		Logger:     newTestLogger(),
+	})
+
+	requestBody := map[string]any{
+		"messages": []map[string]any{
+			{"role": "user", "content": "block this"},
+		},
+	}
+	bodyBytes, _ := json.Marshal(requestBody)
+
+	// Simulate real ext_proc flow: headers first, then body
+	stream := &mockExternalProcessorStream{
+		ctx: context.Background(),
+		requests: []*extprocv3.ProcessingRequest{
+			{
+				Request: &extprocv3.ProcessingRequest_RequestHeaders{
+					RequestHeaders: &extprocv3.HttpHeaders{},
+				},
+			},
+			{
+				Request: &extprocv3.ProcessingRequest_RequestBody{
+					RequestBody: &extprocv3.HttpBody{Body: bodyBytes},
+				},
+			},
+		},
+	}
+
+	err := service.Process(stream)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(stream.responses) != 2 {
+		t.Fatalf("expected 2 responses (headers + body), got %d", len(stream.responses))
+	}
+
+	// First response: headers passthrough
+	if _, ok := stream.responses[0].Response.(*extprocv3.ProcessingResponse_RequestHeaders); !ok {
+		t.Error("expected RequestHeaders response first")
+	}
+
+	// Second response: blocked by AIDR
+	if _, ok := stream.responses[1].Response.(*extprocv3.ProcessingResponse_ImmediateResponse); !ok {
+		t.Error("expected ImmediateResponse (blocked) for body")
+	}
+}
+
+func TestCalloutService_BodySizeLimit(t *testing.T) {
+	t.Parallel()
+	mockClient := &mockAIDRClient{}
+
+	service := NewCalloutService(CalloutServiceParams{
+		AIDRClient: mockClient,
+		Logger:     newTestLogger(),
+	})
+
+	// Create a body larger than maxBodySize (10MB)
+	largeBody := make([]byte, maxBodySize+1)
+	largeBody[0] = '{'
+	largeBody[len(largeBody)-1] = '}'
+
+	stream := &mockExternalProcessorStream{
+		ctx: context.Background(),
+		requests: []*extprocv3.ProcessingRequest{
+			{
+				Request: &extprocv3.ProcessingRequest_RequestBody{
+					RequestBody: &extprocv3.HttpBody{Body: largeBody},
+				},
+			},
+		},
+	}
+
+	err := service.Process(stream)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mockClient.called {
+		t.Error("AIDR should not be called for oversized body")
+	}
+
+	if len(stream.responses) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(stream.responses))
+	}
+
+	if _, ok := stream.responses[0].Response.(*extprocv3.ProcessingResponse_RequestBody); !ok {
+		t.Fatal("expected RequestBody (allow) for oversized body")
 	}
 }

@@ -33,14 +33,19 @@ type Config struct {
 
 	// EchoMode bypasses AIDR and just logs payloads. Always allows requests.
 	EchoMode bool
+
+	// FailureMode controls behavior when AIDR is unreachable or returns an error.
+	// "allow" (default) lets requests through; "deny" blocks them.
+	FailureMode string
 }
 
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {
 	cfg := &Config{
-		GRPCPort:   8080,
-		HealthPort: 8081,
-		LogLevel:   "info",
+		GRPCPort:    8080,
+		HealthPort:  8081,
+		LogLevel:    "info",
+		FailureMode: "allow",
 	}
 
 	// Required configuration
@@ -54,7 +59,7 @@ func Load() (*Config, error) {
 	}
 	cfg.AIDRCloud = cloudURL
 
-	cfg.AIDRToken = os.Getenv("AIDR_TOKEN")
+	cfg.AIDRToken = strings.TrimSpace(os.Getenv("AIDR_TOKEN"))
 	if cfg.AIDRToken == "" {
 		return nil, fmt.Errorf("AIDR_TOKEN environment variable is required")
 	}
@@ -65,6 +70,9 @@ func Load() (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid GRPC_PORT: %w", err)
 		}
+		if p < 1 || p > 65535 {
+			return nil, fmt.Errorf("invalid GRPC_PORT %d: must be between 1 and 65535", p)
+		}
 		cfg.GRPCPort = p
 	}
 
@@ -73,17 +81,38 @@ func Load() (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid HEALTH_PORT: %w", err)
 		}
+		if p < 1 || p > 65535 {
+			return nil, fmt.Errorf("invalid HEALTH_PORT %d: must be between 1 and 65535", p)
+		}
 		cfg.HealthPort = p
 	}
 
 	cfg.CollectorInstanceID = os.Getenv("COLLECTOR_INSTANCE_ID")
 
 	if level := os.Getenv("LOG_LEVEL"); level != "" {
-		cfg.LogLevel = level
+		switch level {
+		case "debug", "info", "warn", "error":
+			cfg.LogLevel = level
+		default:
+			return nil, fmt.Errorf("invalid LOG_LEVEL %q: must be one of debug, info, warn, error", level)
+		}
 	}
 
 	cfg.DebugMode = os.Getenv("DEBUG_MODE") == "true"
 	cfg.EchoMode = os.Getenv("ECHO_MODE") == "true"
+
+	if cfg.EchoMode && os.Getenv("ALLOW_ECHO_MODE") != "true" {
+		return nil, fmt.Errorf("ECHO_MODE=true requires ALLOW_ECHO_MODE=true as a safety guard")
+	}
+
+	if fm := os.Getenv("FAILURE_MODE"); fm != "" {
+		switch fm {
+		case "allow", "deny":
+			cfg.FailureMode = fm
+		default:
+			return nil, fmt.Errorf("invalid FAILURE_MODE %q: must be \"allow\" or \"deny\"", fm)
+		}
+	}
 
 	return cfg, nil
 }

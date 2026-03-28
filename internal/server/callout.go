@@ -3,11 +3,14 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 	"strings"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -19,6 +22,10 @@ import (
 	"github.com/crowdstrike/aidr-go"
 	"github.com/crowdstrike/aidr-go/packages/param"
 )
+
+// maxBodySize is the maximum body size (10 MB) that the shim will attempt to
+// parse and send to AIDR. Larger bodies are allowed through without scanning.
+const maxBodySize = 10 * 1024 * 1024
 
 // AIDRClient defines the interface for AIDR operations.
 // This allows for mocking in tests.
@@ -48,6 +55,7 @@ type CalloutService struct {
 	logger              *slog.Logger
 	debugMode           bool
 	echoMode            bool
+	failClosed          bool
 }
 
 // CalloutServiceParams contains parameters for creating a CalloutService.
@@ -57,6 +65,7 @@ type CalloutServiceParams struct {
 	Logger              *slog.Logger
 	DebugMode           bool
 	EchoMode            bool
+	FailClosed          bool
 }
 
 // NewCalloutService creates a new CalloutService.
@@ -67,13 +76,14 @@ func NewCalloutService(cs CalloutServiceParams) *CalloutService {
 		logger:              cs.Logger,
 		debugMode:           cs.DebugMode,
 		echoMode:            cs.EchoMode,
+		failClosed:          cs.FailClosed,
 	}
 }
 
 // Process implements the bidirectional streaming RPC for ext_proc.
 func (s *CalloutService) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
-	ctx := WithRequestID(stream.Context())
-	requestID := GetRequestID(ctx)
+	ctx := stream.Context()
+	requestID := generateRequestID()
 
 	for {
 		req, err := stream.Recv()
@@ -102,7 +112,7 @@ func (s *CalloutService) Process(stream extprocv3.ExternalProcessor_ProcessServe
 					"error", err,
 					"request_id", requestID,
 				)
-				resp = s.allowResponse(true)
+				resp = s.errorResponse(true)
 			}
 		case *extprocv3.ProcessingRequest_ResponseHeaders:
 			resp = s.handleResponseHeaders(ctx, v.ResponseHeaders)
@@ -113,7 +123,7 @@ func (s *CalloutService) Process(stream extprocv3.ExternalProcessor_ProcessServe
 					"error", err,
 					"request_id", requestID,
 				)
-				resp = s.allowResponse(false)
+				resp = s.errorResponse(false)
 			}
 		default:
 			resp = &extprocv3.ProcessingResponse{}
@@ -171,10 +181,25 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 		return s.allowResponse(isRequest), nil
 	}
 
-	// Parse the body as JSON to extract guard_input structure
+	// Bodies exceeding maxBodySize are allowed through without scanning.
+	if len(body) > maxBodySize {
+		s.logger.Warn("body exceeds max size, skipping AIDR scan",
+			"type", eventTypeStr,
+			"body_size", len(body),
+			"max_size", maxBodySize,
+		)
+		return s.allowResponse(isRequest), nil
+	}
+
+	// Parse the body as JSON to extract guard_input structure.
+	// Non-JSON bodies (e.g. binary, form data) are allowed through without scanning.
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("parse JSON body: %w", err)
+		s.logger.Debug("non-JSON body, skipping AIDR scan",
+			"type", eventTypeStr,
+			"body_size", len(body),
+		)
+		return s.allowResponse(isRequest), nil
 	}
 
 	// Echo mode: log and allow without calling AIDR
@@ -405,17 +430,27 @@ func (s *CalloutService) extractMCPResponseContent(payload map[string]any) map[s
 		}
 	}
 
-	// Extract from result.messages[] (sampling response)
+	// Extract from result.messages[] (sampling response).
+	// Content may be a string, a single content block (map), or an array of
+	// content blocks per the MCP sampling spec.
 	if messages, ok := result["messages"].([]any); ok {
 		for _, item := range messages {
 			if m, ok := item.(map[string]any); ok {
-				if content, ok := m["content"].(map[string]any); ok {
-					if text, ok := content["text"].(string); ok {
+				switch c := m["content"].(type) {
+				case string:
+					texts = append(texts, c)
+				case map[string]any:
+					if text, ok := c["text"].(string); ok {
 						texts = append(texts, text)
 					}
-				}
-				if content, ok := m["content"].(string); ok {
-					texts = append(texts, content)
+				case []any:
+					for _, block := range c {
+						if cb, ok := block.(map[string]any); ok {
+							if text, ok := cb["text"].(string); ok {
+								texts = append(texts, text)
+							}
+						}
+					}
 				}
 			}
 		}
@@ -443,9 +478,16 @@ func (s *CalloutService) extractToolsCall(params map[string]any) map[string]any 
 		return nil
 	}
 
-	// Serialize all argument values into a single scannable string
+	// Serialize all argument values into a single scannable string (sorted for deterministic output)
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	var parts []string
-	for _, v := range args {
+	for _, k := range keys {
+		v := args[k]
 		switch val := v.(type) {
 		case string:
 			parts = append(parts, val)
@@ -542,9 +584,15 @@ func (s *CalloutService) extractPromptsGet(params map[string]any) map[string]any
 	}
 
 	var parts []string
-	for _, v := range args {
-		if s, ok := v.(string); ok {
-			parts = append(parts, s)
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		if v, ok := args[k].(string); ok {
+			parts = append(parts, v)
 		}
 	}
 
@@ -576,6 +624,28 @@ func (s *CalloutService) extractResourcesRead(params map[string]any) map[string]
 			{"role": "user", "content": uri},
 		},
 	}
+}
+
+// generateRequestID generates a random request ID using crypto/rand.
+func generateRequestID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "unknown"
+	}
+	return hex.EncodeToString(b)
+}
+
+// errorResponse returns an allow or deny response based on the configured failure mode.
+func (s *CalloutService) errorResponse(isRequest bool) *extprocv3.ProcessingResponse {
+	if s.failClosed {
+		resp, err := s.blockedResponse(isRequest)
+		if err != nil {
+			s.logger.Error("failed to create blocked response during error handling", "error", err)
+			return s.allowResponse(isRequest)
+		}
+		return resp
+	}
+	return s.allowResponse(isRequest)
 }
 
 func (s *CalloutService) allowResponse(isRequest bool) *extprocv3.ProcessingResponse {
@@ -634,6 +704,9 @@ func (s *CalloutService) blockedResponse(isRequest bool) (*extprocv3.ProcessingR
 	}, nil
 }
 
+// transformedResponse replaces the entire original body with AIDR's guard_output.
+// This is intentional: AIDR returns the full sanitized payload, not a diff, so the
+// original body must be fully replaced to apply the transformation.
 func (s *CalloutService) transformedResponse(guardOutput any, isRequest bool) (*extprocv3.ProcessingResponse, error) {
 	// Marshal the guard output back to JSON
 	bodyBytes, err := json.Marshal(guardOutput)

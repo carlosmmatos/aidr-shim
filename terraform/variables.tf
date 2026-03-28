@@ -72,3 +72,9 @@ variable "container_image" {
   description = "Container image to deploy (e.g., gcr.io/PROJECT/aidr-shim:latest). Must be built and pushed before applying."
   type        = string
 }
+
+variable "allow_unauthenticated" {
+  description = "Allow unauthenticated access to Cloud Run service. WARNING: Only enable for development or when service is behind a load balancer with its own auth."
+  type        = bool
+  default     = false
+}

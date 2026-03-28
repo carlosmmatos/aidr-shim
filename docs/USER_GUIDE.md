@@ -255,6 +255,7 @@ See [CONFIGURATION.md](CONFIGURATION.md) for detailed configuration options.
 | `AIDR_TOKEN` | Yes | - | Bearer token |
 | `LOG_LEVEL` | No | `info` | Logging level |
 | `DEBUG_MODE` | No | `false` | Verbose logging |
+| `FAILURE_MODE` | No | `allow` | Behavior when AIDR is unreachable: `allow` or `deny` |
 | `GRPC_PORT` | No | `8080` | gRPC server port |
 | `HEALTH_PORT` | No | `8081` | Health check port |
 
@@ -307,7 +308,7 @@ Use the provided script to verify a deployed Cloud Run service:
 ./scripts/test-cloud-run.sh
 ```
 
-This tests the health and ready endpoints of your deployed service.
+This tests the health endpoint of your deployed service.
 
 ### Verifying Results
 
@@ -408,7 +409,7 @@ The shim exposes a health check at `http://SERVICE:8081/health`:
 ```bash
 # From within the same VPC
 curl http://aidr-shim:8081/health
-# Response: {"status": "healthy"}
+# Response: OK
 ```
 
 ---

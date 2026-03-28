@@ -39,7 +39,7 @@ make lint
 Echo mode bypasses the AIDR API entirely. The shim logs payloads and allows all requests through. Useful for testing the gRPC/ext_proc protocol without cloud access.
 
 ```bash
-ECHO_MODE=true AIDR_CLOUD=us-1 AIDR_TOKEN=dummy LOG_LEVEL=debug make run
+ECHO_MODE=true ALLOW_ECHO_MODE=true AIDR_CLOUD=us-1 AIDR_TOKEN=dummy LOG_LEVEL=debug make run
 ```
 
 ### Integration Testing (real AIDR credentials)
@@ -181,7 +181,7 @@ ECHO_MODE=false AIDR_CLOUD=us-1 AIDR_TOKEN=<your-token> \
 | Envoy listener | `10000` | Send HTTP requests here |
 | Envoy admin | `9901` | Envoy admin dashboard |
 | Shim gRPC | `8080` | Direct gRPC access (bypasses Envoy) |
-| Shim health | `8081` | Health/readiness endpoints |
+| Shim health | `8081` | Health endpoint |
 | Echo server | `8000` | Direct access to upstream echo backend |
 
 ### Tearing Down
@@ -196,7 +196,6 @@ While the shim is running:
 
 ```bash
 curl http://localhost:8081/health
-curl http://localhost:8081/ready
 ```
 
 ## Environment Variables
@@ -209,7 +208,9 @@ curl http://localhost:8081/ready
 | `HEALTH_PORT` | No | `8081` | Health check HTTP port |
 | `LOG_LEVEL` | No | `info` | Logging level (debug, info, warn, error) |
 | `DEBUG_MODE` | No | `false` | Verbose AIDR request/response logging |
-| `ECHO_MODE` | No | `false` | Bypass AIDR API, allow all requests |
+| `ECHO_MODE` | No | `false` | Bypass AIDR API, allow all requests (requires `ALLOW_ECHO_MODE=true`) |
+| `ALLOW_ECHO_MODE` | No | `false` | Safety guard for ECHO_MODE |
+| `FAILURE_MODE` | No | `allow` | Behavior when AIDR is unreachable: `allow` or `deny` |
 | `COLLECTOR_INSTANCE_ID` | No | | Optional instance identifier |
 
 ## Deployment Scripts
@@ -219,7 +220,7 @@ curl http://localhost:8081/ready
 Deploy with debug logging enabled:
 
 ```bash
-./scripts/deploy-debug.sh
+./scripts/deploy.sh --debug
 ```
 
 ### Cloud Run Smoke Tests
@@ -246,7 +247,7 @@ docker build -t aidr-shim:local .
 
 # Run with echo mode
 docker run -p 8080:8080 -p 8081:8081 \
-  -e ECHO_MODE=true -e AIDR_CLOUD=us-1 -e AIDR_TOKEN=dummy \
+  -e ECHO_MODE=true -e ALLOW_ECHO_MODE=true -e AIDR_CLOUD=us-1 -e AIDR_TOKEN=dummy \
   aidr-shim:local
 
 # Run with real credentials
