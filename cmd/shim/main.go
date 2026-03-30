@@ -34,19 +34,8 @@ func main() {
 	}
 
 	// Set log level
-	var logLevel slog.Level
-	switch cfg.LogLevel {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "warn":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
-	default:
-		logLevel = slog.LevelInfo
-	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: logLevel,
+		Level: cfg.LogLevel,
 	}))
 	slog.SetDefault(logger)
 
@@ -77,7 +66,7 @@ func main() {
 		Logger:              logger,
 		DebugMode:           cfg.DebugMode,
 		EchoMode:            cfg.EchoMode,
-		FailClosed:          cfg.FailureMode == "deny",
+		FailClosed:          cfg.FailClosed,
 	})
 
 	// Create gRPC server.

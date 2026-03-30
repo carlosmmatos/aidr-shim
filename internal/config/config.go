@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -26,7 +27,7 @@ type Config struct {
 	CollectorInstanceID string
 
 	// LogLevel controls logging verbosity.
-	LogLevel string
+	LogLevel slog.Level
 
 	// DebugMode enables verbose logging of requests and responses.
 	DebugMode bool
@@ -34,18 +35,17 @@ type Config struct {
 	// EchoMode bypasses AIDR and just logs payloads. Always allows requests.
 	EchoMode bool
 
-	// FailureMode controls behavior when AIDR is unreachable or returns an error.
-	// "allow" (default) lets requests through; "deny" blocks them.
-	FailureMode string
+	// FailClosed indicates whether the shim should block requests when AIDR
+	// is unreachable or returns an error. False (default) lets requests through.
+	FailClosed bool
 }
 
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {
 	cfg := &Config{
-		GRPCPort:    8080,
-		HealthPort:  8081,
-		LogLevel:    "info",
-		FailureMode: "allow",
+		GRPCPort:   8080,
+		HealthPort: 8081,
+		LogLevel:   slog.LevelInfo,
 	}
 
 	// Required configuration
@@ -85,8 +85,14 @@ func Load() (*Config, error) {
 
 	if level := os.Getenv("LOG_LEVEL"); level != "" {
 		switch level {
-		case "debug", "info", "warn", "error":
-			cfg.LogLevel = level
+		case "debug":
+			cfg.LogLevel = slog.LevelDebug
+		case "info":
+			cfg.LogLevel = slog.LevelInfo
+		case "warn":
+			cfg.LogLevel = slog.LevelWarn
+		case "error":
+			cfg.LogLevel = slog.LevelError
 		default:
 			return nil, fmt.Errorf("invalid LOG_LEVEL %q: must be one of debug, info, warn, error", level)
 		}
@@ -101,8 +107,10 @@ func Load() (*Config, error) {
 
 	if fm := os.Getenv("FAILURE_MODE"); fm != "" {
 		switch fm {
-		case "allow", "deny":
-			cfg.FailureMode = fm
+		case "allow":
+			// default, FailClosed remains false
+		case "deny":
+			cfg.FailClosed = true
 		default:
 			return nil, fmt.Errorf("invalid FAILURE_MODE %q: must be \"allow\" or \"deny\"", fm)
 		}

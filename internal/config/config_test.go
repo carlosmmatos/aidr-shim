@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"testing"
 )
@@ -119,8 +120,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.HealthPort != 8081 {
 		t.Errorf("expected default health port 8081, got %d", cfg.HealthPort)
 	}
-	if cfg.LogLevel != "info" {
-		t.Errorf("expected default log level 'info', got %s", cfg.LogLevel)
+	if cfg.LogLevel != slog.LevelInfo {
+		t.Errorf("expected default log level info, got %s", cfg.LogLevel)
 	}
 	if cfg.CollectorInstanceID != "" {
 		t.Errorf("expected empty collector instance ID, got %s", cfg.CollectorInstanceID)
@@ -182,8 +183,8 @@ func TestLoad_OptionalFields(t *testing.T) {
 	if cfg.CollectorInstanceID != "my-instance" {
 		t.Errorf("expected collector instance ID 'my-instance', got %s", cfg.CollectorInstanceID)
 	}
-	if cfg.LogLevel != "debug" {
-		t.Errorf("expected log level 'debug', got %s", cfg.LogLevel)
+	if cfg.LogLevel != slog.LevelDebug {
+		t.Errorf("expected log level debug, got %s", cfg.LogLevel)
 	}
 }
 
@@ -245,13 +246,13 @@ func TestLoad_FailureMode(t *testing.T) {
 	tests := []struct {
 		name    string
 		value   string
-		want    string
+		want    bool
 		wantErr bool
 	}{
-		{"default is allow", "", "allow", false},
-		{"explicit allow", "allow", "allow", false},
-		{"explicit deny", "deny", "deny", false},
-		{"invalid value", "block", "", true},
+		{"default is allow", "", false, false},
+		{"explicit allow", "allow", false, false},
+		{"explicit deny", "deny", true, false},
+		{"invalid value", "block", false, true},
 	}
 
 	for _, tt := range tests {
@@ -273,8 +274,8 @@ func TestLoad_FailureMode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if cfg.FailureMode != tt.want {
-				t.Errorf("FailureMode = %q, want %q", cfg.FailureMode, tt.want)
+			if cfg.FailClosed != tt.want {
+				t.Errorf("FailClosed = %v, want %v", cfg.FailClosed, tt.want)
 			}
 		})
 	}
@@ -320,15 +321,15 @@ func TestLoad_LogLevelValidation(t *testing.T) {
 	tests := []struct {
 		name    string
 		level   string
-		want    string
+		want    slog.Level
 		wantErr bool
 	}{
-		{"default is info", "", "info", false},
-		{"debug", "debug", "debug", false},
-		{"info", "info", "info", false},
-		{"warn", "warn", "warn", false},
-		{"error", "error", "error", false},
-		{"invalid value", "trace", "", true},
+		{"default is info", "", slog.LevelInfo, false},
+		{"debug", "debug", slog.LevelDebug, false},
+		{"info", "info", slog.LevelInfo, false},
+		{"warn", "warn", slog.LevelWarn, false},
+		{"error", "error", slog.LevelError, false},
+		{"invalid value", "trace", 0, true},
 	}
 
 	for _, tt := range tests {
@@ -351,7 +352,7 @@ func TestLoad_LogLevelValidation(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if cfg.LogLevel != tt.want {
-				t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, tt.want)
+				t.Errorf("LogLevel = %v, want %v", cfg.LogLevel, tt.want)
 			}
 		})
 	}
