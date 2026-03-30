@@ -409,23 +409,14 @@ func (s *CalloutService) extractMCPResponseContent(payload map[string]any) map[s
 	var toolTexts []string
 	var assistantTexts []string
 
-	// Extract from result.content[] (tools/call response, prompts/get response)
-	if content, ok := result["content"].([]any); ok {
-		for _, item := range content {
-			if m, ok := item.(map[string]any); ok {
-				if text, ok := m["text"].(string); ok {
-					toolTexts = append(toolTexts, text)
-				}
-			}
-		}
-	}
-
-	// Extract from result.contents[] (resources/read response)
-	if contents, ok := result["contents"].([]any); ok {
-		for _, item := range contents {
-			if m, ok := item.(map[string]any); ok {
-				if text, ok := m["text"].(string); ok {
-					toolTexts = append(toolTexts, text)
+	// Extract from result.content[] and result.contents[]
+	for _, key := range []string{"content", "contents"} {
+		if items, ok := result[key].([]any); ok {
+			for _, item := range items {
+				if m, ok := item.(map[string]any); ok {
+					if text, ok := m["text"].(string); ok {
+						toolTexts = append(toolTexts, text)
+					}
 				}
 			}
 		}

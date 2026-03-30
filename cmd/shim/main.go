@@ -26,16 +26,10 @@ import (
 )
 
 func main() {
-	// Initialize logger
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
-
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("failed to load configuration", "error", err)
+		slog.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
 
@@ -51,7 +45,7 @@ func main() {
 	default:
 		logLevel = slog.LevelInfo
 	}
-	logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: logLevel,
 	}))
 	slog.SetDefault(logger)
