@@ -44,8 +44,6 @@ func main() {
 	switch cfg.LogLevel {
 	case "debug":
 		logLevel = slog.LevelDebug
-	case "info":
-		logLevel = slog.LevelInfo
 	case "warn":
 		logLevel = slog.LevelWarn
 	case "error":

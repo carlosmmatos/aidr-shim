@@ -168,13 +168,10 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 		eventTypeStr = "response"
 	}
 
-	// Debug logging of incoming body
-	if s.debugMode {
-		s.logger.Debug("processing body",
-			"type", eventTypeStr,
-			"body_size", len(body),
-		)
-	}
+	s.logger.Debug("processing body",
+		"type", eventTypeStr,
+		"body_size", len(body),
+	)
 
 	// Empty bodies (e.g. chunked transfer or 204 responses) can't be scanned.
 	if len(body) == 0 {
@@ -193,13 +190,20 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 
 	// Parse the body as JSON to extract guard_input structure.
 	// Non-JSON bodies (e.g. binary, form data) are allowed through without scanning.
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
+	if !json.Valid(body) {
 		s.logger.Debug("non-JSON body, skipping AIDR scan",
 			"type", eventTypeStr,
 			"body_size", len(body),
 		)
 		return s.allowResponse(isRequest), nil
+	}
+
+	var payload map[string]any
+	// json.Valid guarantees well-formed JSON, so Unmarshal into map[string]any
+	// only fails if the top-level value is not an object (e.g. array, string).
+	// Those payloads have no extractable fields, so allow them through.
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("unmarshal JSON body: %w", err)
 	}
 
 	// Echo mode: log and allow without calling AIDR
@@ -227,14 +231,11 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 	}
 	if isMCPResponse(payload) {
 		guardInput = s.extractMCPResponseContent(payload)
-		if guardInput == nil {
-			return s.allowResponse(isRequest), nil
-		}
 	} else {
 		guardInput = s.buildGuardInput(payload)
-		if guardInput == nil {
-			return s.allowResponse(isRequest), nil
-		}
+	}
+	if guardInput == nil {
+		return s.allowResponse(isRequest), nil
 	}
 
 	// Call AIDR
@@ -247,23 +248,19 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 		params.CollectorInstanceID = param.NewOpt(s.collectorInstanceID)
 	}
 
-	if s.debugMode {
-		s.logger.Debug("calling AIDR API",
-			"event_type", string(eventType),
-		)
-	}
+	s.logger.Debug("calling AIDR API",
+		"event_type", string(eventType),
+	)
 
 	aidrResp, err := s.aidrClient.GuardChatCompletions(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("call AIDR API: %w", err)
 	}
 
-	if s.debugMode {
-		s.logger.Debug("AIDR API response",
-			"blocked", aidrResp.Result.Blocked,
-			"transformed", aidrResp.Result.Transformed,
-		)
-	}
+	s.logger.Debug("AIDR API response",
+		"blocked", aidrResp.Result.Blocked,
+		"transformed", aidrResp.Result.Transformed,
+	)
 
 	// Check for blocked content
 	if aidrResp.Result.Blocked {
@@ -278,9 +275,7 @@ func (s *CalloutService) processBody(ctx context.Context, body []byte, eventType
 	// Check for transformed content
 	if aidrResp.Result.Transformed && aidrResp.Result.GuardOutput != nil {
 		s.logger.Info("request transformed by AIDR policy")
-		if s.debugMode {
-			s.logger.Debug("transformed output", "has_guard_output", true)
-		}
+		s.logger.Debug("transformed output", "has_guard_output", true)
 		resp, err := s.transformedResponse(aidrResp.Result.GuardOutput, isRequest)
 		if err != nil {
 			return nil, fmt.Errorf("create transformed response: %w", err)
@@ -400,20 +395,26 @@ func (s *CalloutService) extractMCPContent(payload map[string]any) map[string]an
 
 // extractMCPResponseContent extracts scannable text from MCP JSON-RPC response
 // payloads. Returns nil if no scannable content is found.
+//
+// Content sources are mapped to roles that reflect their origin:
+//   - content[]/contents[]/structuredContent → role: "tool" (tool output)
+//   - messages[] → role: "assistant" (model-generated)
+//   - tools[] → role: "tool" (tool listing for poisoning detection)
 func (s *CalloutService) extractMCPResponseContent(payload map[string]any) map[string]any {
 	result, ok := payload["result"].(map[string]any)
 	if !ok {
 		return nil
 	}
 
-	var texts []string
+	var toolTexts []string
+	var assistantTexts []string
 
 	// Extract from result.content[] (tools/call response, prompts/get response)
 	if content, ok := result["content"].([]any); ok {
 		for _, item := range content {
 			if m, ok := item.(map[string]any); ok {
 				if text, ok := m["text"].(string); ok {
-					texts = append(texts, text)
+					toolTexts = append(toolTexts, text)
 				}
 			}
 		}
@@ -424,8 +425,32 @@ func (s *CalloutService) extractMCPResponseContent(payload map[string]any) map[s
 		for _, item := range contents {
 			if m, ok := item.(map[string]any); ok {
 				if text, ok := m["text"].(string); ok {
-					texts = append(texts, text)
+					toolTexts = append(toolTexts, text)
 				}
+			}
+		}
+	}
+
+	// Extract from result.structuredContent (arbitrary JSON value).
+	// Prevents bypass when a server returns only structuredContent with no content[].
+	if sc, ok := result["structuredContent"]; ok {
+		b, err := json.Marshal(sc)
+		if err == nil {
+			toolTexts = append(toolTexts, string(b))
+		}
+	}
+
+	// Extract from result.tools[] (tools/list response — tool poisoning detection).
+	// Serialize each tool's name, description, and inputSchema into scannable text.
+	if tools, ok := result["tools"].([]any); ok {
+		for _, item := range tools {
+			t, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			b, err := json.Marshal(t)
+			if err == nil {
+				toolTexts = append(toolTexts, string(b))
 			}
 		}
 	}
@@ -438,16 +463,16 @@ func (s *CalloutService) extractMCPResponseContent(payload map[string]any) map[s
 			if m, ok := item.(map[string]any); ok {
 				switch c := m["content"].(type) {
 				case string:
-					texts = append(texts, c)
+					assistantTexts = append(assistantTexts, c)
 				case map[string]any:
 					if text, ok := c["text"].(string); ok {
-						texts = append(texts, text)
+						assistantTexts = append(assistantTexts, text)
 					}
 				case []any:
 					for _, block := range c {
 						if cb, ok := block.(map[string]any); ok {
 							if text, ok := cb["text"].(string); ok {
-								texts = append(texts, text)
+								assistantTexts = append(assistantTexts, text)
 							}
 						}
 					}
@@ -456,18 +481,30 @@ func (s *CalloutService) extractMCPResponseContent(payload map[string]any) map[s
 		}
 	}
 
-	if len(texts) == 0 {
+	if len(toolTexts) == 0 && len(assistantTexts) == 0 {
 		return nil
 	}
 
+	var messages []map[string]any
+	if len(toolTexts) > 0 {
+		messages = append(messages, map[string]any{
+			"role": "tool", "content": strings.Join(toolTexts, "\n"),
+		})
+	}
+	if len(assistantTexts) > 0 {
+		messages = append(messages, map[string]any{
+			"role": "assistant", "content": strings.Join(assistantTexts, "\n"),
+		})
+	}
+
 	return map[string]any{
-		"messages": []map[string]any{
-			{"role": "assistant", "content": strings.Join(texts, "\n")},
-		},
+		"messages": messages,
 	}
 }
 
 // extractToolsCall extracts arguments from a tools/call request into messages.
+// Arguments are serialized as JSON to preserve key names, nesting, and types,
+// matching the proxy's JSON.stringify(args.params.arguments) behavior.
 func (s *CalloutService) extractToolsCall(params map[string]any) map[string]any {
 	if params == nil {
 		return nil
@@ -478,36 +515,15 @@ func (s *CalloutService) extractToolsCall(params map[string]any) map[string]any 
 		return nil
 	}
 
-	// Serialize all argument values into a single scannable string (sorted for deterministic output)
-	keys := make([]string, 0, len(args))
-	for k := range args {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	var parts []string
-	for _, k := range keys {
-		v := args[k]
-		switch val := v.(type) {
-		case string:
-			parts = append(parts, val)
-		default:
-			b, err := json.Marshal(val)
-			if err == nil {
-				parts = append(parts, string(b))
-			}
-		}
-	}
-
-	if len(parts) == 0 {
+	content, err := json.Marshal(args)
+	if err != nil {
 		return nil
 	}
 
 	toolName, _ := params["name"].(string)
-	content := strings.Join(parts, "\n")
 
 	messages := []map[string]any{
-		{"role": "user", "content": content},
+		{"role": "user", "content": string(content)},
 	}
 
 	guardInput := map[string]any{"messages": messages}

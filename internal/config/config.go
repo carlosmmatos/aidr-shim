@@ -65,26 +65,20 @@ func Load() (*Config, error) {
 	}
 
 	// Optional configuration with defaults
-	if port := os.Getenv("GRPC_PORT"); port != "" {
-		p, err := strconv.Atoi(port)
-		if err != nil {
-			return nil, fmt.Errorf("invalid GRPC_PORT: %w", err)
-		}
-		if p < 1 || p > 65535 {
-			return nil, fmt.Errorf("invalid GRPC_PORT %d: must be between 1 and 65535", p)
-		}
-		cfg.GRPCPort = p
+	grpcPort, err := parsePort("GRPC_PORT")
+	if err != nil {
+		return nil, err
+	}
+	if grpcPort != 0 {
+		cfg.GRPCPort = grpcPort
 	}
 
-	if port := os.Getenv("HEALTH_PORT"); port != "" {
-		p, err := strconv.Atoi(port)
-		if err != nil {
-			return nil, fmt.Errorf("invalid HEALTH_PORT: %w", err)
-		}
-		if p < 1 || p > 65535 {
-			return nil, fmt.Errorf("invalid HEALTH_PORT %d: must be between 1 and 65535", p)
-		}
-		cfg.HealthPort = p
+	healthPort, err := parsePort("HEALTH_PORT")
+	if err != nil {
+		return nil, err
+	}
+	if healthPort != 0 {
+		cfg.HealthPort = healthPort
 	}
 
 	cfg.CollectorInstanceID = os.Getenv("COLLECTOR_INSTANCE_ID")
@@ -115,6 +109,23 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// parsePort reads an env var as a port number (1-65535).
+// Returns 0 if the env var is unset, and an error if the value is invalid.
+func parsePort(envVar string) (int, error) {
+	s := os.Getenv(envVar)
+	if s == "" {
+		return 0, nil
+	}
+	p, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", envVar, err)
+	}
+	if p < 1 || p > 65535 {
+		return 0, fmt.Errorf("invalid %s %d: must be between 1 and 65535", envVar, p)
+	}
+	return p, nil
 }
 
 // parseCloud normalizes and validates a cloud region string.
