@@ -21,40 +21,21 @@ import (
 	"github.com/crowdstrike/aidr-go"
 	"github.com/crowdstrike/aidr-go/option"
 
+	"github.com/crowdstrike/aidr-gcp-shim/internal/config"
 	"github.com/crowdstrike/aidr-gcp-shim/internal/server"
-	"github.com/crowdstrike/aidr-gcp-shim/pkg/config"
 )
 
 func main() {
-	// Initialize logger
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
-
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("failed to load configuration", "error", err)
+		slog.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
 
 	// Set log level
-	var logLevel slog.Level
-	switch cfg.LogLevel {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "info":
-		logLevel = slog.LevelInfo
-	case "warn":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
-	default:
-		logLevel = slog.LevelInfo
-	}
-	logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: logLevel,
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: cfg.LogLevel,
 	}))
 	slog.SetDefault(logger)
 
@@ -85,9 +66,12 @@ func main() {
 		Logger:              logger,
 		DebugMode:           cfg.DebugMode,
 		EchoMode:            cfg.EchoMode,
+		FailClosed:          cfg.FailClosed,
 	})
 
-	// Create gRPC server
+	// Create gRPC server.
+	// No TLS configured here — Cloud Run terminates TLS at the edge and
+	// forwards plaintext to the container over an internal Unix socket.
 	grpcServer := grpc.NewServer()
 	extprocv3.RegisterExternalProcessorServer(grpcServer, calloutService)
 
@@ -96,8 +80,10 @@ func main() {
 	healthpb.RegisterHealthServer(grpcServer, healthServer)
 	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 
-	// Enable reflection for debugging
-	reflection.Register(grpcServer)
+	// Enable reflection for debugging (disabled in production)
+	if cfg.DebugMode {
+		reflection.Register(grpcServer)
+	}
 
 	// Create listeners
 	grpcListener, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.GRPCPort))
@@ -112,12 +98,6 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte("OK")); err != nil {
 			logger.Debug("failed to write health response", "error", err)
-		}
-	})
-	healthMux.HandleFunc("/ready", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte("OK")); err != nil {
-			logger.Debug("failed to write ready response", "error", err)
 		}
 	})
 
@@ -157,12 +137,27 @@ func main() {
 		logger.Error("server error", "error", err)
 	}
 
-	// Graceful shutdown
+	// Graceful shutdown with timeout
 	logger.Info("shutting down servers")
-	grpcServer.GracefulStop()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
+
+	// GracefulStop can block indefinitely if a client holds a stream open,
+	// so run it in a goroutine and fall back to Stop() on timeout.
+	grpcDone := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(grpcDone)
+	}()
+
+	select {
+	case <-grpcDone:
+		logger.Info("gRPC server stopped gracefully")
+	case <-shutdownCtx.Done():
+		logger.Warn("gRPC graceful stop timed out, forcing stop")
+		grpcServer.Stop()
+	}
 
 	if err := healthHTTPServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error("error during health server shutdown", "error", err)

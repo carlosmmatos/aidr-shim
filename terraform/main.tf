@@ -90,8 +90,7 @@ resource "google_cloud_run_v2_service" "aidr_shim" {
 
   deletion_protection = false
 
-  # Allow unauthenticated access (the service will be behind Google's LB)
-  ingress = "INGRESS_TRAFFIC_ALL"
+  ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
 
   labels = {
     app = "aidr-shim"
@@ -100,6 +99,7 @@ resource "google_cloud_run_v2_service" "aidr_shim" {
 
 # IAM policy to allow unauthenticated access
 resource "google_cloud_run_v2_service_iam_member" "allow_unauthenticated" {
+  count    = var.allow_unauthenticated ? 1 : 0
   project  = google_cloud_run_v2_service.aidr_shim.project
   location = google_cloud_run_v2_service.aidr_shim.location
   name     = google_cloud_run_v2_service.aidr_shim.name

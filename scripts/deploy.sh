@@ -3,6 +3,7 @@
 #
 # Usage:
 #   Interactive: ./scripts/deploy.sh
+#   With debug:  ./scripts/deploy.sh --debug
 #   Non-interactive: AIDR_CLOUD=... AIDR_TOKEN=... ./scripts/deploy.sh
 #
 # This script will:
@@ -22,6 +23,14 @@
 
 set -euo pipefail
 
+# Parse flags
+DEBUG_MODE_FLAG=false
+for arg in "$@"; do
+    case "$arg" in
+        --debug) DEBUG_MODE_FLAG=true ;;
+    esac
+done
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -38,6 +47,9 @@ error() { echo -e "${RED}ERROR:${NC} $1"; }
 # Configuration defaults
 DEFAULT_REGION="us-central1"
 DEFAULT_SERVICE_NAME="aidr-shim"
+if [[ "$DEBUG_MODE_FLAG" == "true" ]]; then
+    DEFAULT_SERVICE_NAME="aidr-shim-debug"
+fi
 DEFAULT_MIN_INSTANCES="0"
 DEFAULT_MAX_INSTANCES="10"
 
@@ -246,7 +258,7 @@ main() {
         --project="$PROJECT_ID" \
         --source . \
         --region="$REGION" \
-        --set-env-vars="LOG_LEVEL=info" \
+        --set-env-vars="LOG_LEVEL=$(if [[ "$DEBUG_MODE_FLAG" == "true" ]]; then echo debug; else echo info; fi),DEBUG_MODE=$DEBUG_MODE_FLAG" \
         --set-secrets="AIDR_CLOUD=aidr-cloud:latest,AIDR_TOKEN=aidr-token:latest" \
         --allow-unauthenticated \
         --port=8080 \

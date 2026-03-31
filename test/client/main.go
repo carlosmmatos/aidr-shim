@@ -335,14 +335,9 @@ func printResult(result TestResult) {
 	case VerdictTransformed:
 		fmt.Printf("[TRANSFORMED] %s\n", filename)
 		if result.TransformedBody != nil {
-			// Pretty print transformed body
-			var pretty strings.Builder
 			prettyBytes, err := json.MarshalIndent(result.TransformedBody, "  ", "  ")
 			if err == nil {
-				pretty.Write(prettyBytes)
-			}
-			if err == nil {
-				lines := strings.Split(pretty.String(), "\n")
+				lines := strings.Split(string(prettyBytes), "\n")
 				// Show first 10 lines to avoid huge output
 				maxLines := 10
 				if len(lines) > maxLines {

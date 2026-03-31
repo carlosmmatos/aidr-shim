@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -26,13 +27,17 @@ type Config struct {
 	CollectorInstanceID string
 
 	// LogLevel controls logging verbosity.
-	LogLevel string
+	LogLevel slog.Level
 
 	// DebugMode enables verbose logging of requests and responses.
 	DebugMode bool
 
 	// EchoMode bypasses AIDR and just logs payloads. Always allows requests.
 	EchoMode bool
+
+	// FailClosed indicates whether the shim should block requests when AIDR
+	// is unreachable or returns an error. False (default) lets requests through.
+	FailClosed bool
 }
 
 // Load reads configuration from environment variables.
@@ -40,7 +45,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		GRPCPort:   8080,
 		HealthPort: 8081,
-		LogLevel:   "info",
+		LogLevel:   slog.LevelInfo,
 	}
 
 	// Required configuration
@@ -54,38 +59,81 @@ func Load() (*Config, error) {
 	}
 	cfg.AIDRCloud = cloudURL
 
-	cfg.AIDRToken = os.Getenv("AIDR_TOKEN")
+	cfg.AIDRToken = strings.TrimSpace(os.Getenv("AIDR_TOKEN"))
 	if cfg.AIDRToken == "" {
 		return nil, fmt.Errorf("AIDR_TOKEN environment variable is required")
 	}
 
 	// Optional configuration with defaults
-	if port := os.Getenv("GRPC_PORT"); port != "" {
-		p, err := strconv.Atoi(port)
-		if err != nil {
-			return nil, fmt.Errorf("invalid GRPC_PORT: %w", err)
-		}
-		cfg.GRPCPort = p
+	grpcPort, err := parsePort("GRPC_PORT")
+	if err != nil {
+		return nil, err
+	}
+	if grpcPort != 0 {
+		cfg.GRPCPort = grpcPort
 	}
 
-	if port := os.Getenv("HEALTH_PORT"); port != "" {
-		p, err := strconv.Atoi(port)
-		if err != nil {
-			return nil, fmt.Errorf("invalid HEALTH_PORT: %w", err)
-		}
-		cfg.HealthPort = p
+	healthPort, err := parsePort("HEALTH_PORT")
+	if err != nil {
+		return nil, err
+	}
+	if healthPort != 0 {
+		cfg.HealthPort = healthPort
 	}
 
 	cfg.CollectorInstanceID = os.Getenv("COLLECTOR_INSTANCE_ID")
 
 	if level := os.Getenv("LOG_LEVEL"); level != "" {
-		cfg.LogLevel = level
+		switch level {
+		case "debug":
+			cfg.LogLevel = slog.LevelDebug
+		case "info":
+			cfg.LogLevel = slog.LevelInfo
+		case "warn":
+			cfg.LogLevel = slog.LevelWarn
+		case "error":
+			cfg.LogLevel = slog.LevelError
+		default:
+			return nil, fmt.Errorf("invalid LOG_LEVEL %q: must be one of debug, info, warn, error", level)
+		}
 	}
 
 	cfg.DebugMode = os.Getenv("DEBUG_MODE") == "true"
 	cfg.EchoMode = os.Getenv("ECHO_MODE") == "true"
 
+	if cfg.EchoMode && os.Getenv("ALLOW_ECHO_MODE") != "true" {
+		return nil, fmt.Errorf("ECHO_MODE=true requires ALLOW_ECHO_MODE=true as a safety guard")
+	}
+
+	if fm := os.Getenv("FAILURE_MODE"); fm != "" {
+		switch fm {
+		case "allow":
+			// default, FailClosed remains false
+		case "deny":
+			cfg.FailClosed = true
+		default:
+			return nil, fmt.Errorf("invalid FAILURE_MODE %q: must be \"allow\" or \"deny\"", fm)
+		}
+	}
+
 	return cfg, nil
+}
+
+// parsePort reads an env var as a port number (1-65535).
+// Returns 0 if the env var is unset, and an error if the value is invalid.
+func parsePort(envVar string) (int, error) {
+	s := os.Getenv(envVar)
+	if s == "" {
+		return 0, nil
+	}
+	p, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", envVar, err)
+	}
+	if p < 1 || p > 65535 {
+		return 0, fmt.Errorf("invalid %s %d: must be between 1 and 65535", envVar, p)
+	}
+	return p, nil
 }
 
 // parseCloud normalizes and validates a cloud region string.

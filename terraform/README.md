@@ -110,6 +110,7 @@ collector_instance_id = "prod-us-central1"
 | `log_level` | No | `info` | Log level |
 | `debug_mode` | No | `false` | Enable debug logging |
 | `collector_instance_id` | No | `""` | Instance identifier |
+| `allow_unauthenticated` | No | `false` | Allow unauthenticated access (only for dev or behind LB with its own auth) |
 
 ## Outputs
 

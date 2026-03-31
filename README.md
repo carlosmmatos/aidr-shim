@@ -121,15 +121,14 @@ go build -o testclient ./test/client
 ```text
 ├── cmd/
 │   └── shim/           # Main service
-├── pkg/
-│   └── config/         # Configuration
 ├── internal/
+│   ├── config/         # Configuration
 │   └── server/         # gRPC server implementation
 ├── scripts/
-│   ├── deploy.sh           # Production deployment
-│   ├── deploy-debug.sh     # Debug deployment
+│   ├── deploy.sh           # Production deployment (--debug flag for debug mode)
 │   ├── setup-prerequisites.sh
 │   ├── test-cloud-run.sh   # Cloud Run smoke tests
+│   ├── test-local.sh       # Local Envoy integration tests
 │   └── cleanup.sh          # Resource cleanup
 ├── terraform/          # Terraform module
 ├── test/
@@ -150,6 +149,8 @@ Key environment variables:
 | `AIDR_TOKEN` | Yes | Bearer token for authentication |
 | `LOG_LEVEL` | No | debug, info, warn, error (default: info) |
 | `DEBUG_MODE` | No | Enable verbose logging (default: false) |
+| `FAILURE_MODE` | No | `allow` (default) or `deny` — controls behavior when AIDR is unreachable |
+| `ECHO_MODE` | No | Bypass AIDR scanning (requires `ALLOW_ECHO_MODE=true`) |
 
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for all options.
 
